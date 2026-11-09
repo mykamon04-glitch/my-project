@@ -1,6 +1,13 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Rule 10: readable UI font everywhere; "font-mono" now means tabular-figure UI text.
+   The military display face (Chakra Petch, .font-display) is reserved for headings. */
+@theme {
+  --font-mono: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+.font-mono { font-variant-numeric: tabular-nums; }
+
 :root {
   /* Iron Dominion design system */
   --id-bg: #0B121C;

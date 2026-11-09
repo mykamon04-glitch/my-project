@@ -59,6 +59,7 @@ import {
   UnitType,
 } from '../../types/game';
 import { formatHp, getHpColor, getUnitStatusText } from '../../utils/format';
+import { AiManagerCards } from './AiManagerCards';
 
 export type MobileTab = 'build' | 'army' | 'defense' | 'ai' | 'menu';
 export type SheetSnapState = 'collapsed' | 'half' | 'expanded';
@@ -436,7 +437,7 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
   const allUnitTypes = Object.keys(UNIT_CONFIGS) as UnitType[];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-30 pointer-events-auto select-none font-mono">
+    <div className="fixed bottom-0 left-0 right-0 z-30 pointer-events-auto select-none">
       {/* 1. SELECTED UNITS COMMAND DOCK (Matching Reference Screenshot c7b881fb) */}
       {selectedUnits.length > 0 && (
         <div className="mx-auto w-[min(calc(100vw-12px),580px)] mb-1 bg-[#101820]/95 backdrop-blur-md border border-[#2FB68A]/60 rounded-2xl p-2 shadow-2xl animate-in slide-in-from-bottom-2 duration-200">
@@ -618,15 +619,15 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
             {activeTab === 'build' && (
               <div className="space-y-2">
                 {/* Categories Tab Strip */}
-                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-1 text-[11px] font-bold">
+                <div className="grid grid-cols-3 min-[520px]:grid-cols-6 gap-1 text-[10px] font-bold">
                   {(
                     [
                       { id: 'economy', label: 'ECONOMY' },
                       { id: 'power', label: 'POWER' },
                       { id: 'military', label: 'MILITARY' },
                       { id: 'defense', label: 'DEFENSE' },
-                      { id: 'technology', label: 'TECHNOLOGY' },
-                      { id: 'infrastructure', label: 'INFRASTRUCTURE' },
+                      { id: 'technology', label: 'TECH' },
+                      { id: 'infrastructure', label: 'INFRA' },
                     ] as { id: BuildCategory; label: string }[]
                   ).map(cat => (
                     <button
@@ -635,7 +636,8 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
                         triggerHaptic();
                         setBuildCategory(cat.id);
                       }}
-                      className={`px-3 py-1.5 rounded-xl uppercase shrink-0 transition-all ${
+                      title={cat.id}
+                      className={`px-1 h-9 rounded-xl uppercase truncate transition-all ${
                         buildCategory === cat.id
                           ? 'bg-[#2FB68A] text-[#101820] font-bold shadow-md shadow-[#2FB68A]/20'
                           : 'bg-[#1B2730] text-[#A8B6C2] hover:text-white'
@@ -979,83 +981,9 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
               </div>
             )}
 
-            {/* --- TAB D: AI COMMANDER --- */}
+            {/* --- TAB D: AI MANAGERS (wired to engine.getAIModules / toggleAIModule) --- */}
             {activeTab === 'ai' && (
-              <div className="space-y-2.5">
-                {/* 5 AI Systems: Combat Commander, Base Defense, Economy Manager, Construction Manager, Expansion Director */}
-                {[
-                  {
-                    id: 'combat',
-                    name: 'Combat Commander',
-                    desc: 'Coordinates automated squad engagements and strategic retreats.',
-                    status: 'ACTIVE',
-                    color: 'text-[#2FB68A]',
-                  },
-                  {
-                    id: 'defense',
-                    name: 'Base Defense Grid',
-                    desc: 'Monitors base perimeters and redirects defensive fire arrays.',
-                    status: 'ONLINE',
-                    color: 'text-[#4B91B5]',
-                  },
-                  {
-                    id: 'economy',
-                    name: 'Economy Manager',
-                    desc: 'Balances harvester mining routes and titanium storage.',
-                    status: 'ONLINE',
-                    color: 'text-[#E5A93D]',
-                  },
-                  {
-                    id: 'construction',
-                    name: 'Construction Manager',
-                    desc: 'Proactively plans power grids and supply logistics.',
-                    status: 'STANDBY',
-                    color: 'text-[#2FB68A]',
-                  },
-                  {
-                    id: 'expansion',
-                    name: 'Expansion Director',
-                    desc: 'Surveys unmined crystal fields and marks perimeter outposts.',
-                    status: 'STANDBY',
-                    color: 'text-[#4B91B5]',
-                  },
-                ].map(sys => (
-                  <div
-                    key={sys.id}
-                    className="p-2.5 rounded-xl border bg-[#1B2730] border-[#2c3e50] flex items-center justify-between gap-2"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-display font-bold text-xs text-[#F1F5F7]">{sys.name}</span>
-                        <span className={`text-[9px] font-bold ${sys.color}`}>[{sys.status}]</span>
-                      </div>
-                      <p className="text-[10px] text-[#A8B6C2] mt-0.5">{sys.desc}</p>
-                    </div>
-
-                    <button
-                      onClick={triggerHaptic}
-                      className="px-2.5 py-1 rounded-lg bg-[#2FB68A] text-[#101820] font-bold text-[10px] active:scale-95"
-                    >
-                      ON
-                    </button>
-                  </div>
-                ))}
-
-                {/* Expandable Activity Logs */}
-                <button
-                  onClick={() => setShowAIActivityLog(p => !p)}
-                  className="w-full py-1.5 text-center text-xs text-[#4B91B5] font-bold border-t border-[#1B2730]"
-                >
-                  {showAIActivityLog ? 'Hide Tactical Logs ▲' : 'Show Tactical Logs ▼'}
-                </button>
-                {showAIActivityLog && (
-                  <div className="p-2 rounded-xl bg-[#101820] border border-[#2c3e50] text-[10px] text-[#A8B6C2] space-y-1 max-h-32 overflow-y-auto">
-                    <p className="text-[#2FB68A]">• Defense grid fully powered. 0 breaches.</p>
-                    <p className="text-[#4B91B5]">• Titan titanium deposits surveyed.</p>
-                    <p>• Fleet readiness at 100% capacity.</p>
-                  </div>
-                )}
-              </div>
+              <AiManagerCards engine={engine} onHaptic={triggerHaptic} onOpenAdvisor={onOpenAdvisor} />
             )}
           </div>
         </div>
@@ -1125,7 +1053,7 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
             className="flex flex-col items-center justify-center gap-1 h-12 rounded-xl transition-all min-h-[48px] text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]"
           >
             <MenuIcon className="w-4 h-4 stroke-[2.2]" />
-            <span className="text-[10px] font-display font-bold tracking-wider">MENU</span>
+            <span className="text-[10px] font-display font-bold tracking-wider">MORE</span>
           </button>
         </div>
       </nav>
