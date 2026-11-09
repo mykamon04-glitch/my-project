@@ -1,62 +1,79 @@
-# Iron Dominion — Audit, Repairs and Visual Upgrade (V5.1)
+# Iron Dominion — Audit, Repairs and Upgrades (V5.1 → V6.0)
 
 Baseline: the untouched Google AI Studio project is tag `baseline-aistudio-original`
 (`git checkout baseline-aistudio-original` restores it exactly).
 
-**Scope decision.** The brief supplied alongside this one (V3.0/V4.0) asks for new gameplay (naval units, territory
-capture, new factions, new research tree). V5.1 states the opposite: *preserve gameplay, not a new game*. V5.1 is the latest
-and most specific, so V3/V4 feature work was **not** done. Gameplay files were changed in exactly one place (see Bug 1–2).
+**Scope.** Several briefs asked for new systems (naval units, territory capture, new factions, a research tree, a rebuilt
+art pipeline). The consistent, latest instruction is *preserve the original gameplay; repair and extend it*. New-game
+systems were therefore **not** added. Gameplay code changed only where a defect was confirmed by a test (listed below).
+Active renderer: the 2D canvas `TacticalRenderer` (3D `TacticalThreeRenderer` is an opt-in toggle); both read the same
+`GameEngine` state.
 
-## 1. Confirmed bugs (each has evidence) and fixes
+## 1. Confirmed bugs (each reproduced before fixing) and fixes
 
-| # | Bug | Evidence | Fix |
-|---|---|---|---|
-| 1 | Population cap bypass: queued units were not counted, so a batch could overshoot the cap | Test `PROBE`: room for 62, engine accepted 68 | `engine.queueUnitProduction` counts queued units against the cap |
-| 2 | Engine accepted any unit at any building (Rifleman queued at the HQ, $100 charged) | Test `PROBE`: accepted=true, credits 5000→4900 | Engine refuses when `config.requiredBuilding !== building.type` |
-| 3 | Top HUD overflowed on phones: chips lived in an `overflow-x-auto` row; Threat chip and "TROOPS" were clipped/pushed off-screen | Screenshots at 390 px (baseline) | Non-scrolling grid, shrinking chips, `formatCompact`, labels collapse <420 px |
-| 4 | Mission panel, radar and AI banner overlapped the camera-tools row (hard-coded `top-14/16`) | Screenshots | Shared `--hud-top` CSS variable; panel width capped so it never runs under the radar |
-| 5 | **AI tab was a placeholder**: static status text, "ON" buttons that only vibrated, hard-coded log. The real engine API (`getAIModules`, `toggleAIModule`) was used by no component | Source read + runtime switch test | New `AiManagerCards` bound to the real API |
-| 6 | **Graphics settings did nothing**: `resolutionScale`, `shadowQuality`, `frameRateTarget` were read by nothing; presets only set a label | `grep` across `src` (types + Settings UI only) | Wired into renderer/App loop; presets apply real values; Particle Density control added; labels Performance/Balanced/High/Ultra |
-| 7 | Bottom sheet declared snap states but only ever used collapsed/half; fixed `50vh`; no drag | Source + drag test | Drag handle, live resize, snap collapsed/half/expanded, flick bias, never overlaps HUD or nav |
-| 8 | Build category tabs clipped ("TECHNOLOG"); long building names truncated; Settings tab strip clipped | Screenshots | Wrapping grids; names wrap; Settings tabs wrap |
+| # | Area | Bug | Evidence | Fix |
+|---|---|---|---|---|
+| 1 | Recruitment | Population cap ignored queued units | probe: room 62, engine accepted 68 | queued units counted against the cap |
+| 2 | Recruitment | Any building accepted any unit and charged for it | probe: Rifleman queued at HQ, $100 charged | refuse unless `requiredBuilding` matches |
+| 3 | **Movement** | Units ordered onto a blocked tile (building/water) walked **into** it | probe: 8/8 units ended on blocked tiles | `pathfinding.ts`: ring search for nearest walkable goal; final waypoint no longer overwritten with the blocked pixel; formation slots snapped to walkable ground |
+| 4 | **Defense** | After a threat ended, defenders stayed idle 150–180 px from home (stale `attack_move` never cancelled) | probe: 0/6 regrouped | return branch now cancels the stale order |
+| 5 | **Radar / fog** | Threat list (warnings + Defense AI) used sensor range only, so fog-hidden enemies became threats the minimap did not show | probe: hidden enemy listed as threat | threats require fog visibility; a **powered** radar now reveals fog to its sensor radius so long-range warning still works |
+| 6 | HUD | Resource chips in a scroller; Threat/TROOPS clipped; panels overlapped | screenshots | non-scrolling grid, compact numbers, shared `--hud-top` |
+| 7 | AI tab | Placeholder (static text, no-op buttons); real engine AI API unused | source + runtime | `AiManagerCards` bound to `getAIModules/toggleAIModule` |
+| 8 | Settings | Resolution scale, shadow quality, frame-rate target read by nothing | `grep` | wired; presets apply values; Particle Density added |
+| 9 | Sheet | Declared snap states unused, no drag | source + test | drag handle, 3-state snap, never overlaps HUD/nav |
+| 10 | Layout | Category/Settings tabs and building names clipped | screenshots | wrapping grids |
+| 11 | Visual | Fog drawn as hard per-tile black rectangles (blocky edges) | screenshot comparison | 1px-per-tile alpha mask drawn with bilinear smoothing (same rules, soft edges, one `drawImage`) |
 
-## 2. Checked and found NOT to be bugs
-- **Screen shake**: already off (`screenShake` default `0`; both renderers bypass `screenShakeOffset`). Now covered by a test.
-- **Number formatting**: runtime scan of every panel on 3 viewports found no float artifacts / NaN / Infinity / undefined.
-  `formatHp` already existed (95.88/120 → `96/120 HP`).
-- **Rotation**: every building footprint in the data is square (1×1, 2×2, 3×3), so rotation is orientation-only by design.
-- Original `npm run lint` and `npm run build` were already clean.
+**Deliberate balance change (item 5):** a completed, powered Radar Station now reveals fog out to its 850 px sensor
+radius (previously 700 px always). Unpowered radars are unchanged.
 
-## 3. Modified files
-Gameplay: `src/game/engine.ts` (the two guards in `queueUnitProduction`; nothing else).
-Render/UI: `src/game/renderer.ts`, `src/game/renderQuality.ts` (new), `src/App.tsx`, `src/index.css`, `src/utils/format.ts`,
-`src/components/mobile/MobileTopHUD.tsx`, `MobileBottomSheet.tsx`, `AiManagerCards.tsx` (new), `MobileFloatingRadar.tsx`,
-`src/components/SettingsModal.tsx`. Tests: `tests/engine.test.ts`, `tests/e2e/*.cjs`, `vitest.config.ts`.
-Untouched: `ai.ts`, `combat.ts`, `pathfinding.ts`, `mapGenerator.ts`, `data/`, `types/`.
+## 2. Added
+- **Smart Recruitment** (AI tab): Balanced / Defensive / Armored / Infantry / Custom, credit-reserve budget, army-size target,
+  custom percentages. Configures the engine's *existing* auto-production; it is real: from identical facilities Armored built
+  3 infantry + 14 vehicles, Infantry built 24 infantry + 12 vehicles. Control is ON/OFF (the engine has no SUGGEST mode for production).
+- Compact AI manager cards (live status, task, last action, real switches).
+- Graphics presets Performance/Balanced/High/Ultra that set resolution scale, shadows, particles; FPS cap; particle density.
 
-## 4. Test results (all actually run)
-- `npm run lint` clean · `npm run build` ok · `npm test`: 18/18 (recruitment, construction, economy, save/load of queues,
-  AI parity, formatting, shake, render-quality helpers).
-- Browser (Chromium, Playwright): smoke 11/11 at 320×640, 360×740, 390×844, 844×390, 768×1024, 1280×720; sheet drag 12/12;
-  placement controls/rotate/cancel at 360×740 and 844×390; graphics settings 6/6 (960 px canvas under Performance,
-  30.0 fps under the 30 FPS target, fewer shadow draws); number scan clean.
-- AI parity: enemy went 3→19 units and 1→4 buildings in 240 sim-seconds; player auto-production trained units within the cap.
+## 3. Checked and found fine
+- Screen shake is off (default 0; renderers bypass the offset) — now tested.
+- No float artifacts / NaN / Infinity / undefined in any panel (runtime scan, 3 viewports).
+- Formations (line, column, wedge, spread, circle) are real destinations with distinct layouts and ≥25 px separation.
+- Manual orders override auto-defense; selecting 203 units took 0.1 ms and dispatching a formation move ≤10 ms (Node timings).
+- Building placement rejects overlap and charges nothing; all footprints are square so rotation is orientation-only.
+- Enemy AI parity after all fixes: 3→18–19 units and 1→4 buildings in 240 sim-seconds.
 
-## 5. Remaining limitations (not done / not verified)
-- **Art overhaul (§9) not done**: terrain is still per-tile procedural fills, sprites/buildings/vehicles are unchanged, no new
-  construction/destruction animations or VFX pass. Selection-panel and radar restyle not done (functional, only fonts/offsets changed).
-- Build-card thumbnails are still the original small SVG icons.
-- `textureQuality` / `antiAliasing` exist only as types (no UI, no effect). `shadowQuality` 'medium' and 'high' render identically.
-- No real-device testing. The FPS cap and canvas scale were measured in headless Chromium only; **no FPS, 2K or 4K claim is made.**
-- UI recruit buttons still test `population >= cap` without queued units; the engine now refuses correctly, but a card can look
-  enabled for one tap before refusing.
-- Dragging a panel was not tested for camera side effects with real touch hardware (panels are DOM siblings of the canvas).
-- No save-format change; round-trip tested, but old real-world saves were not available to test.
+## 4. Modified files
+Gameplay (defect repairs only): `src/game/engine.ts` (queue guards; regroup; fog-gated threats; powered-radar fog reach, fog-slot
+snapping), `src/game/pathfinding.ts` (blocked-goal handling). Render/UI: `renderer.ts` (shadows/particles/resolution/fog),
+`renderQuality.ts`*, `smartRecruitment.ts`*, `App.tsx`, `index.css`, `utils/format.ts`, `MobileTopHUD.tsx`, `MobileBottomSheet.tsx`,
+`AiManagerCards.tsx`*, `SmartRecruitmentCard.tsx`*, `MobileFloatingRadar.tsx`, `SettingsModal.tsx` (*new). Tests: `tests/*.test.ts`, `tests/e2e/*.cjs`.
+Untouched: `ai.ts`, `combat.ts`, `mapGenerator.ts`, `data/`, `types/`.
 
-## 6. Run it
+## 5. Test results (all executed)
+- `npm run lint` clean; `npm run build` ok; `npm test` **35/35** (engine, movement, defense/fog, smart recruitment, formatting).
+- Browser (Chromium/Playwright): smoke 11/11 at 320×640, 360×740, 390×844, 844×390, 768×1024, 1280×720; sheet drag 12/12;
+  placement/cancel 12/12; graphics settings 7/7; Smart Recruitment UI 30/30 at 3 sizes; number scan clean.
+
+## 6. NOT done / not verified (honest list)
+- **Art**: building, infantry, vehicle, aircraft, terrain and effect artwork is the original's; no atlases, no Three.js geometry
+  or material upgrade, no new construction/destruction animation. Only the fog edge was improved.
+- **Main menu / Settings redesign** (§13): not redesigned. Existing options untouched.
+- **Combat refinements** (§6: cover, projectile collision, turret rotation, damage feedback): not audited or changed.
+- **Enemy AI** (§10): unchanged; "avoid repeating the same attack route" and "react to player composition" not verified.
+- **Touch controls** (§4): the original already has select-all/idle/same-type, control groups and long-press selection; I did not
+  change or test them on real touch hardware. Camera side-effects of dragging panels were not tested on a device.
+- **Placement recommendations** (§9): existing system not modified or audited beyond overlap rejection.
+- **Decorative terrain blocking movement**: not audited (movement tests passed, but props were not individually checked).
+- **Performance**: only Node timings (200 units: median 2.5 ms/tick) and headless-Chromium frame counting. No phone testing;
+  **no 60 FPS, 2K or 4K claim**. Particle pooling, sprite batching and off-screen effect culling were not implemented.
+- **Smart Recruitment** has no SUGGEST mode (engine limitation); `textureQuality`/`antiAliasing` remain unused types.
+- Saves: no format change; queue round-trip tested; no real old saves available to test.
+
+## 7. Run it
 ```
 npm install --legacy-peer-deps      # original pins esbuild ^0.25 vs Vite 8's optional peer
 npm run dev                         # or: npm run build && npx vite preview
-npm run lint && npm test            # type-check + unit tests
-node tests/e2e/smoke.cjs 390 844    # browser checks; needs `playwright` and a running preview (see tests/e2e/README.md)
+npm run lint && npm test
+node tests/e2e/smoke.cjs 390 844    # needs `playwright` + a running preview; see tests/e2e/README.md
 ```

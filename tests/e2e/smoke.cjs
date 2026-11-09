@@ -37,14 +37,17 @@ const results = []; const ok = (name, pass, info = '') => { results.push({ name,
 
   // 3. AI manager switch is wired to the engine
   await nav('AI').click(); await p.waitForTimeout(700);
-  const sw = p.getByRole('switch').first();
+  // The AI Base Architect module card (Smart Recruitment has its own switch above the module cards)
+  const sw = p.getByRole('switch', { name: /Architect/i }).first();
+  const card = sw.locator('xpath=ancestor::div[contains(@class,"rounded-xl")][1]');
+  const statusOf = async () => ((await card.innerText()).match(/OFFLINE|ONLINE|STANDBY|ACTIVE|PAUSED/) || ['?'])[0];
   const before = await sw.getAttribute('aria-checked');
-  const statusBefore = await p.locator('text=/OFFLINE|ONLINE|STANDBY|ACTIVE/').first().innerText();
+  const statusBefore = await statusOf();
   await sw.click(); await p.waitForTimeout(900);
   const after = await sw.getAttribute('aria-checked');
-  const statusAfter = await p.locator('text=/OFFLINE|ONLINE|STANDBY|ACTIVE/').first().innerText();
+  const statusAfter = await statusOf();
   ok('AI switch toggles engine state', before !== after, `${before}->${after}; status ${statusBefore}->${statusAfter}`);
-  ok('AI status text follows engine', statusBefore !== statusAfter);
+  ok('AI status text follows engine', statusBefore !== statusAfter, `${statusBefore}->${statusAfter}`);
   await sw.click(); await p.waitForTimeout(400);
 
   // 4. Army panel renders with real units; recruitment tab opens

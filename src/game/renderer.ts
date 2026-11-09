@@ -2959,32 +2959,44 @@ export class TacticalRenderer {
     });
   }
 
-  private renderFogOfWar(mapData: MapData, fogGrid: Uint8Array, camera: Camera, screenW: number, screenH: number) {
+  // Fog is rendered as a 1-pixel-per-tile alpha mask that is scaled up with bilinear smoothing.
+  // Same tile states/opacities as before (0 = unexplored, 1 = explored, 2 = visible) but soft edges instead of
+  // hard per-tile rectangles, and one drawImage instead of thousands of fillRect calls.
+  private fogCanvas: HTMLCanvasElement | null = null;
+  private fogImage: ImageData | null = null;
+
+  private renderFogOfWar(mapData: MapData, fogGrid: Uint8Array, _camera: Camera, _screenW: number, _screenH: number) {
     const ctx = this.ctx;
     const ts = mapData.tileSize;
+    const w = mapData.width;
+    const h = mapData.height;
 
-    const halfW = screenW / 2 / camera.zoom;
-    const halfH = screenH / 2 / camera.zoom;
-    const minX = Math.max(0, Math.floor((camera.x - halfW) / ts));
-    const maxX = Math.min(mapData.width - 1, Math.ceil((camera.x + halfW) / ts));
-    const minY = Math.max(0, Math.floor((camera.y - halfH) / ts));
-    const maxY = Math.min(mapData.height - 1, Math.ceil((camera.y + halfH) / ts));
-
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
-        const state = fogGrid[y * mapData.width + x];
-        const px = x * ts;
-        const py = y * ts;
-
-        if (state === 0) {
-          ctx.fillStyle = '#06080d';
-          ctx.fillRect(px, py, ts, ts);
-        } else if (state === 1) {
-          ctx.fillStyle = 'rgba(6, 8, 13, 0.58)';
-          ctx.fillRect(px, py, ts, ts);
-        }
-      }
+    if (!this.fogCanvas || this.fogCanvas.width !== w || this.fogCanvas.height !== h) {
+      this.fogCanvas = document.createElement('canvas');
+      this.fogCanvas.width = w;
+      this.fogCanvas.height = h;
+      this.fogImage = null;
     }
+    const fctx = this.fogCanvas.getContext('2d');
+    if (!fctx) return;
+    if (!this.fogImage) this.fogImage = fctx.createImageData(w, h);
+
+    const data = this.fogImage.data;
+    for (let i = 0; i < w * h; i++) {
+      const state = fogGrid[i];
+      const o = i * 4;
+      data[o] = 6;
+      data[o + 1] = 8;
+      data[o + 2] = 13;
+      data[o + 3] = state === 0 ? 255 : state === 1 ? 148 /* 0.58 */ : 0;
+    }
+    fctx.putImageData(this.fogImage, 0, 0);
+
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(this.fogCanvas, 0, 0, w, h, 0, 0, w * ts, h * ts);
+    ctx.restore();
   }
 
   private renderPlacementPreview(

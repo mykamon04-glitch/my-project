@@ -140,6 +140,39 @@ export class PathfindingGrid {
     return this.isWalkable(gx, gy);
   }
 
+  /**
+   * Nearest walkable tile to (gx, gy) found by expanding square rings (Chebyshev radius), picking the
+   * Euclidean-closest walkable tile in the first ring that has one. Returns null if none within maxR.
+   * (The old code only tried the 8 direct neighbours, which are all blocked inside a large building.)
+   */
+  public nearestWalkable(gx: number, gy: number, maxR: number = 12): { x: number; y: number } | null {
+    if (this.isWalkable(gx, gy)) return { x: gx, y: gy };
+    for (let r = 1; r <= maxR; r++) {
+      let best: { x: number; y: number } | null = null;
+      let bestD = Infinity;
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          if (!this.isWalkable(gx + dx, gy + dy)) continue;
+          const d = dx * dx + dy * dy;
+          if (d < bestD) { bestD = d; best = { x: gx + dx, y: gy + dy }; }
+        }
+      }
+      if (best) return best;
+    }
+    return null;
+  }
+
+  /** The pixel itself if it is on walkable ground, otherwise the centre of the nearest walkable tile. */
+  public walkablePixel(p: Vector2): Vector2 {
+    const gx = Math.max(0, Math.min(this.width - 1, Math.floor(p.x / this.tileSize)));
+    const gy = Math.max(0, Math.min(this.height - 1, Math.floor(p.y / this.tileSize)));
+    if (this.isWalkable(gx, gy)) return { x: p.x, y: p.y };
+    const n = this.nearestWalkable(gx, gy);
+    if (!n) return { x: p.x, y: p.y };
+    return { x: n.x * this.tileSize + this.tileSize / 2, y: n.y * this.tileSize + this.tileSize / 2 };
+  }
+
   // Fast Line-of-Sight Raymarch: If unobstructed, path is instant 0-cost direct vector
   public hasLineOfSight(x0: number, y0: number, x1: number, y1: number): boolean {
     let dx = Math.abs(x1 - x0);
@@ -184,39 +217,26 @@ export class PathfindingGrid {
     targetX = Math.max(0, Math.min(this.width - 1, targetX));
     targetY = Math.max(0, Math.min(this.height - 1, targetY));
 
+    // If the destination is blocked (building, water, rock...), route to the nearest walkable tile instead of
+    // walking into the obstacle. The goal pixel is the exact target when walkable, else that tile's centre.
+    let goalPixel: Vector2 = { x: targetPixel.x, y: targetPixel.y };
+    if (!this.isWalkable(targetX, targetY)) {
+      const n = this.nearestWalkable(targetX, targetY);
+      if (n) {
+        targetX = n.x;
+        targetY = n.y;
+        goalPixel = { x: n.x * this.tileSize + this.tileSize / 2, y: n.y * this.tileSize + this.tileSize / 2 };
+      }
+    }
+
     // If already at target
     if (startX === targetX && startY === targetY) {
-      return [{ x: targetPixel.x, y: targetPixel.y }];
+      return [goalPixel];
     }
 
     // Direct Line-Of-Sight check: Bypass full A* search if direct line is clear
     if (this.hasLineOfSight(startX, startY, targetX, targetY)) {
-      return [{ x: targetPixel.x, y: targetPixel.y }];
-    }
-
-    // If destination is blocked, find nearest walkable tile
-    if (!this.isWalkable(targetX, targetY)) {
-      const neighbors = [
-        { x: targetX + 1, y: targetY },
-        { x: targetX - 1, y: targetY },
-        { x: targetX, y: targetY + 1 },
-        { x: targetX, y: targetY - 1 },
-        { x: targetX + 1, y: targetY + 1 },
-        { x: targetX - 1, y: targetY - 1 },
-        { x: targetX + 1, y: targetY - 1 },
-        { x: targetX - 1, y: targetY + 1 },
-      ];
-      for (const n of neighbors) {
-        if (this.isWalkable(n.x, n.y)) {
-          targetX = n.x;
-          targetY = n.y;
-          break;
-        }
-      }
-    }
-
-    if (startX === targetX && startY === targetY) {
-      return [{ x: targetPixel.x, y: targetPixel.y }];
+      return [goalPixel];
     }
 
     // Advance search tag (avoids reallocating or clearing 4096-element arrays)
@@ -262,10 +282,10 @@ export class PathfindingGrid {
         }
 
         if (rawPath.length === 0) {
-          return [{ x: targetPixel.x, y: targetPixel.y }];
+          return [goalPixel];
         }
 
-        rawPath[rawPath.length - 1] = { x: targetPixel.x, y: targetPixel.y };
+        rawPath[rawPath.length - 1] = goalPixel;
 
         // Raycast string-pulling / smoothing to eliminate jagged zigzagging
         if (rawPath.length <= 2) {
@@ -329,8 +349,8 @@ export class PathfindingGrid {
       }
     }
 
-    // Direct fallback if path blocked
-    return [{ x: targetPixel.x, y: targetPixel.y }];
+    // Direct fallback if no path was found within the search budget
+    return [goalPixel];
   }
 }
 

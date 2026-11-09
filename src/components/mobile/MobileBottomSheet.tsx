@@ -60,6 +60,7 @@ import {
 } from '../../types/game';
 import { formatHp, getHpColor, getUnitStatusText } from '../../utils/format';
 import { AiManagerCards } from './AiManagerCards';
+import { SmartRecruitmentCard } from './SmartRecruitmentCard';
 
 export type MobileTab = 'build' | 'army' | 'defense' | 'ai' | 'menu';
 export type SheetSnapState = 'collapsed' | 'half' | 'expanded';
@@ -1060,7 +1061,10 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
 
             {/* --- TAB D: AI MANAGERS (wired to engine.getAIModules / toggleAIModule) --- */}
             {activeTab === 'ai' && (
-              <AiManagerCards engine={engine} onHaptic={triggerHaptic} onOpenAdvisor={onOpenAdvisor} />
+              <div className="space-y-2">
+                <SmartRecruitmentCard engine={engine} onHaptic={triggerHaptic} />
+                <AiManagerCards engine={engine} onHaptic={triggerHaptic} onOpenAdvisor={onOpenAdvisor} />
+              </div>
             )}
           </div>
         </div>

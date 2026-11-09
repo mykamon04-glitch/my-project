@@ -1631,7 +1631,12 @@ export class GameEngine {
 
     this.buildings.forEach(b => {
       if (b.faction === 'player' && b.hp > 0) {
-        reveal(b.pixelX, b.pixelY, BUILDING_CONFIGS[b.type].vision);
+        const own = BUILDING_CONFIGS[b.type].vision;
+        // An online (completed + powered) radar extends what the player can see to its sensor range.
+        const radarReach = b.type === 'radar_station' && b.constructionProgress >= 1.0 && this.tacticalIntelligence.radarOperational
+          ? this.tacticalIntelligence.radarRange
+          : 0;
+        reveal(b.pixelX, b.pixelY, Math.max(own, radarReach));
       }
     });
   }
@@ -2337,6 +2342,13 @@ export class GameEngine {
     const detectedList: DetectedThreat[] = [];
 
     enemyUnits.forEach(enemy => {
+      // Fog-of-war rule: sensors may not reveal enemies that the player's fog still hides
+      // (otherwise warnings and the Defense AI react to units the minimap does not show).
+      if (this.settings.fogOfWarEnabled) {
+        const fgx = Math.floor(enemy.x / this.mapData.tileSize);
+        const fgy = Math.floor(enemy.y / this.mapData.tileSize);
+        if (this.fogGrid[fgy * this.mapData.width + fgx] !== 2) return;
+      }
       const distToHQ = getDistance(enemy, hqPos);
       const distToRadar = radar ? getDistance(enemy, { x: radar.pixelX, y: radar.pixelY }) : distToHQ;
 
@@ -2498,6 +2510,13 @@ export class GameEngine {
             u.targetX = u.homePosition.x;
             u.targetY = u.homePosition.y;
             u.path = this.pathGrid.findPath(u, u.homePosition, UNIT_CONFIGS[u.type].isAir);
+          } else {
+            // Already near home: cancel the stale defensive order, otherwise the unit keeps walking out
+            // to the old threat position and is stranded there (units were left idle 150px+ from home).
+            u.command = 'idle';
+            u.path = [];
+            u.targetUnitId = undefined;
+            u.targetBuildingId = undefined;
           }
           u.isDefendingZone = false;
         }
@@ -3501,7 +3520,9 @@ export class GameEngine {
 
     selectedUnits.forEach((u, idx) => {
       const off = offsets[idx] || { x: 0, y: 0 };
-      const subTarget = { x: target.x + off.x, y: target.y + off.y };
+      const rawTarget = { x: target.x + off.x, y: target.y + off.y };
+      // A formation slot can fall on a building, rock or water: snap ground units to the nearest walkable ground.
+      const subTarget = UNIT_CONFIGS[u.type].isAir ? rawTarget : this.pathGrid.walkablePixel(rawTarget);
 
       u.command = isAttackMove ? 'attack_move' : 'move';
       u.targetX = subTarget.x;

@@ -240,3 +240,53 @@ describe('placement rotation & rejection', () => {
     expect(e.buildings.length).toBe(nb);
   });
 });
+
+import { applySmartMode, detectSmartMode } from '../src/game/smartRecruitment';
+describe('Smart Recruitment drives real production', () => {
+  function army(mode: Parameters<typeof applySmartMode>[1]) {
+    const e = mk();
+    for (const t of ['barracks', 'vehicle_factory'] as const) buildNow(e, t);
+    e.units = e.units.filter(u => u.faction === 'player');
+    e.economy.credits = 400000;
+    e.autoProduction.enabled = true;
+    e.autoProduction.targetArmySize = 70;
+    e.autoProduction.reserveCredits = 0;
+    e.autoProduction.maxQueueLength = 3;
+    applySmartMode(e.autoProduction, mode);
+    const keep = e.units.length;
+    for (let i = 0; i < 20 * 400; i++) { e.economy.credits = Math.max(e.economy.credits, 100000); e.update(0.05); }
+    const made = e.units.filter(u => u.faction === 'player').slice(keep);
+    const inf = made.filter(u => UNIT_CONFIGS[u.type].category === 'infantry').length;
+    const veh = made.filter(u => UNIT_CONFIGS[u.type].category === 'vehicle').length;
+    return { e, inf, veh, total: made.length };
+  }
+
+  it('Armored and Infantry modes produce measurably different armies from the same facilities', () => {
+    const a = army('armored'), i = army('infantry');
+    // eslint-disable-next-line no-console
+    console.log(`[smart] armored: ${a.inf} inf / ${a.veh} veh ; infantry: ${i.inf} inf / ${i.veh} veh`);
+    expect(a.total).toBeGreaterThan(8);
+    expect(i.total).toBeGreaterThan(8);
+    expect(a.veh / a.total).toBeGreaterThan(i.veh / i.total + 0.15);   // armored leans vehicles
+    expect(i.inf / i.total).toBeGreaterThan(a.inf / a.total + 0.15);   // infantry leans infantry
+  });
+
+  it('respects population cap, the army target and the budget', () => {
+    const { e } = army('balanced');
+    const mine = e.units.filter(u => u.faction === 'player').length;
+    expect(mine).toBeLessThanOrEqual(e.economy.populationCap);
+    expect(mine).toBeLessThanOrEqual(70 + 3);
+  });
+
+  it('preset detection round-trips', () => {
+    const e = mk();
+    for (const m of ['balanced', 'defensive', 'armored', 'infantry'] as const) {
+      applySmartMode(e.autoProduction, m);
+      expect(detectSmartMode(e.autoProduction)).toBe(m);
+    }
+    // a genuinely custom mix is detected as custom (identical numbers to a preset are, by value, that preset)
+    applySmartMode(e.autoProduction, 'custom');
+    e.autoProduction.customComposition = { infantryPct: 41, armorPct: 22, antiAirPct: 12, artilleryPct: 15, supportPct: 10 };
+    expect(detectSmartMode(e.autoProduction)).toBe('custom');
+  });
+});
