@@ -4,6 +4,7 @@
  */
 
 import { BUILDING_CONFIGS, UNIT_CONFIGS } from '../data/gameData';
+import { getRenderScale, particleStride, shadowLevel, ShadowLevel } from './renderQuality';
 import {
   Building,
   BuildingPlacementRecommendation,
@@ -35,6 +36,8 @@ export class TacticalRenderer {
   private ctx: CanvasRenderingContext2D;
   private canvas: HTMLCanvasElement;
   private animFrameTime: number = 0;
+  private shadowLvl: ShadowLevel = 'medium';
+  private pStride = 1;
   private viewMinX: number = -9999;
   private viewMaxX: number = 9999;
   private viewMinY: number = -9999;
@@ -78,8 +81,10 @@ export class TacticalRenderer {
     tacticalIntelligence?: TacticalIntelligence
   ) {
     this.animFrameTime = currentTime;
+    this.shadowLvl = shadowLevel(settings);
+    this.pStride = particleStride(settings);
     const ctx = this.ctx;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = getRenderScale(settings);
     const cssW = this.canvas.width / dpr;
     const cssH = this.canvas.height / dpr;
 
@@ -661,10 +666,12 @@ export class TacticalRenderer {
       switch (p.type) {
         case 'tree': {
           // Tree drop shadow
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-          ctx.beginPath();
-          ctx.ellipse(4, 8, p.size * 0.8, p.size * 0.45, 0, 0, Math.PI * 2);
-          ctx.fill();
+          if (this.shadowLvl === 'medium' || this.shadowLvl === 'high') {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+            ctx.beginPath();
+            ctx.ellipse(4, 8, p.size * 0.8, p.size * 0.45, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
 
           // Organic sway in wind
           const sway = Math.sin(this.animFrameTime * 1.8 + p.x) * 2.5;
@@ -739,10 +746,12 @@ export class TacticalRenderer {
 
         case 'bush': {
           // Directional soft ground drop-shadow (cast toward south-east)
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-          ctx.beginPath();
-          ctx.ellipse(p.size * 0.25, p.size * 0.35, p.size * 0.8, p.size * 0.44, 0, 0, Math.PI * 2);
-          ctx.fill();
+          if (this.shadowLvl === 'medium' || this.shadowLvl === 'high') {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+            ctx.beginPath();
+            ctx.ellipse(p.size * 0.25, p.size * 0.35, p.size * 0.8, p.size * 0.44, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
 
           // Biome-aware rich palette
           const darkTone = biome === 'snow' ? '#1e293b' : biome === 'desert' ? '#5a4224' : '#14381e';
@@ -785,10 +794,12 @@ export class TacticalRenderer {
 
         case 'bush_cluster': {
           // Combined soft ground shadow for the cluster
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
-          ctx.beginPath();
-          ctx.ellipse(3, 5, p.size * 0.95, p.size * 0.52, 0, 0, Math.PI * 2);
-          ctx.fill();
+          if (this.shadowLvl === 'medium' || this.shadowLvl === 'high') {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+            ctx.beginPath();
+            ctx.ellipse(3, 5, p.size * 0.95, p.size * 0.52, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
 
           const darkTone = biome === 'snow' ? '#1e293b' : biome === 'desert' ? '#5a4224' : '#14381e';
           const midTone = biome === 'snow' ? '#334155' : biome === 'desert' ? '#785633' : '#1f592f';
@@ -1001,10 +1012,12 @@ export class TacticalRenderer {
       ctx.save();
 
       // 1. Directional Soft Ground Shadow (cast toward south-east)
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-      ctx.beginPath();
-      ctx.roundRect(x + 6, y + 8, w + elev * 0.45, h + elev * 0.35, 6);
-      ctx.fill();
+      if (this.shadowLvl !== 'off') {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+        ctx.beginPath();
+        ctx.roundRect(x + 6, y + 8, w + elev * 0.45, h + elev * 0.35, 6);
+        ctx.fill();
+      }
 
       // 2. Integrated Architectural Foundation Footing (flush beneath walls, no artificial platform)
       ctx.fillStyle = isPlayer ? '#16202c' : '#261616';
@@ -2186,14 +2199,16 @@ export class TacticalRenderer {
       }
 
       // 2. Unit Shadow
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-      ctx.beginPath();
-      if (isVehicle) {
-        ctx.ellipse(0, 3, 16, 11, 0, 0, Math.PI * 2);
-      } else {
-        ctx.ellipse(0, 2, 7, 4, 0, 0, Math.PI * 2);
+      if (this.shadowLvl !== 'off') {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+        ctx.beginPath();
+        if (isVehicle) {
+          ctx.ellipse(0, 3, 16, 11, 0, 0, Math.PI * 2);
+        } else {
+          ctx.ellipse(0, 2, 7, 4, 0, 0, Math.PI * 2);
+        }
+        ctx.fill();
       }
-      ctx.fill();
 
       // 3. Render Body
       if (isVehicle) {
@@ -2272,10 +2287,12 @@ export class TacticalRenderer {
       ctx.save();
 
       // 1. Ground Drop Shadow (placed on ground directly beneath aircraft)
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
-      ctx.beginPath();
-      ctx.ellipse(u.x, u.y, 14, 9, 0, 0, Math.PI * 2);
-      ctx.fill();
+      if (this.shadowLvl !== 'off') {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+        ctx.beginPath();
+        ctx.ellipse(u.x, u.y, 14, 9, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       // 2. High Flight Layer Position
       ctx.translate(u.x, u.y - altitude);
@@ -2890,8 +2907,10 @@ export class TacticalRenderer {
 
   private renderParticles(particles: Particle[], smokeDensity: 'off' | 'low' | 'normal' = 'normal') {
     const ctx = this.ctx;
-    particles.forEach(p => {
+    const stride = this.pStride;
+    particles.forEach((p, i) => {
       if (p.type === 'smoke' && smokeDensity === 'off') return;
+      if (stride > 1 && p.type !== 'shockwave' && i % stride !== 0) return;
 
       ctx.save();
       const alpha = p.type === 'smoke' && smokeDensity === 'low' ? p.alpha * 0.45 : p.alpha;

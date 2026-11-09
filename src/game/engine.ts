@@ -3021,9 +3021,17 @@ export class GameEngine {
     if (!b || b.hp <= 0 || b.constructionProgress < 1.0) return false;
 
     const config = UNIT_CONFIGS[unitType];
+
+    // Facility rule: a unit may only be produced by the building type it requires
+    // (previously any building accepted any unit and charged for it).
+    if (config.requiredBuilding && config.requiredBuilding !== b.type) return false;
+
     if (b.faction === 'player') {
       if (this.economy.credits < config.cost) return false;
-      if (this.economy.population >= this.economy.populationCap) return false;
+      // Population cap must include units already waiting in production queues,
+      // otherwise a large batch overshoots the cap when the units spawn.
+      const queued = this.buildings.reduce((n, o) => (o.faction === 'player' ? n + o.productionQueue.length : n), 0);
+      if (this.economy.population + queued >= this.economy.populationCap) return false;
       this.economy.credits -= config.cost;
       soundEngine.playClick();
     }

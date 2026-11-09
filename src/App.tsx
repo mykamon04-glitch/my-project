@@ -18,6 +18,7 @@ import { MobileFloatingRadar } from './components/mobile/MobileFloatingRadar';
 import { BUILDING_CONFIGS, UNIT_CONFIGS } from './data/gameData';
 import { recordMatchProgress } from './data/careerStats';
 import { GameEngine } from './game/engine';
+import { frameIntervalMs, getRenderScale } from './game/renderQuality';
 import { Camera, TacticalRenderer } from './game/renderer';
 import { TacticalThreeRenderer } from './game/threeRenderer';
 import {
@@ -417,6 +418,12 @@ export default function App() {
     let lastTime = performance.now();
 
     const loop = (time: number) => {
+      // Frame-rate target (Settings): skip this frame if it is too soon; elapsed time accumulates into the next dt.
+      const minFrameMs = frameIntervalMs(engineRef.current?.settings);
+      if (minFrameMs > 0 && time - lastTime < minFrameMs - 2) {
+        animId = requestAnimationFrame(loop);
+        return;
+      }
       const dt = Math.min((time - lastTime) / 1000, 0.1);
       lastTime = time;
 
@@ -478,7 +485,7 @@ export default function App() {
         }
 
         // Auto-match canvas physical buffer to viewport on frame 1 and resizes with High-DPI 2K/4K scaling
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const dpr = getRenderScale(engine.settings);
         const targetW = Math.floor(window.innerWidth * dpr);
         const targetH = Math.floor(window.innerHeight * dpr);
         if (canvas.width !== targetW || canvas.height !== targetH) {

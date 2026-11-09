@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { PRESET_LABELS, presetValues } from '../game/renderQuality';
 import {
   X,
   Sliders,
@@ -235,12 +236,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Tab Strip */}
-        <div className="flex items-center gap-1 px-4 py-2 border-b border-[#1C2933] bg-[#101820] overflow-x-auto shrink-0">
+        <div className="flex flex-wrap items-center gap-1 px-3 sm:px-4 py-2 border-b border-[#1C2933] bg-[#101820] shrink-0">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-3 py-2 rounded-lg font-mono text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 min-h-[38px] ${
+              className={`px-2.5 py-2 rounded-lg font-mono text-xs font-bold transition-all flex items-center gap-1.5 min-h-[38px] ${
                 activeTab === tab.id
                   ? 'bg-[#173A32] text-[#38B98A] border border-[#38B98A]/60 shadow-sm'
                   : 'text-[#A9B8C5] hover:text-[#F4F7FA] hover:bg-[#1C2933]/60'
@@ -324,15 +325,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       key={preset}
                       onClick={() => {
                         currentSettings.graphicsQuality = preset;
-                        notifyChange(`Graphics preset set to ${preset.toUpperCase()}`);
+                        Object.assign(currentSettings, presetValues(preset));
+                        notifyChange(`Graphics preset: ${PRESET_LABELS[preset]}`);
                       }}
-                      className={`py-2 rounded-lg text-center uppercase font-bold text-[11px] transition-all ${
+                      className={`py-2 rounded-lg text-center font-bold text-[10px] transition-all ${
                         currentSettings.graphicsQuality === preset
                           ? 'bg-[#38B98A] text-[#101820] shadow-md'
                           : 'bg-[#1C2933] text-[#A9B8C5] hover:text-[#F4F7FA]'
                       }`}
                     >
-                      {preset}
+                      {PRESET_LABELS[preset]}
                     </button>
                   ))}
                   <button
@@ -342,7 +344,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       const dpr = window.devicePixelRatio || 1;
                       const quality = isMobile && dpr > 2 ? 'medium' : 'high';
                       currentSettings.graphicsQuality = quality;
-                      notifyChange(`AUTO: Device profile calibrated (${quality.toUpperCase()})`);
+                      Object.assign(currentSettings, presetValues(quality));
+                      notifyChange(`AUTO: Device profile calibrated (${PRESET_LABELS[quality]})`);
                     }}
                     className="py-2 rounded-lg text-center uppercase font-bold text-[11px] bg-[#173A32] text-[#38B98A] border border-[#38B98A]/40 hover:bg-[#38B98A]/20"
                   >
@@ -391,7 +394,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           currentSettings.frameRateTarget = fps;
                           notifyChange(`Target FPS: ${fps === 0 ? 'UNCAPPED' : fps}`);
                         }}
-                        className={`px-2.5 py-1 rounded text-[10px] font-bold ${
+                        className={`px-2 py-1 rounded text-[10px] font-bold whitespace-nowrap ${
                           (currentSettings.frameRateTarget ?? 60) === fps
                             ? 'bg-[#38B98A] text-[#101820]'
                             : 'bg-[#1C2933] text-[#A9B8C5]'
@@ -418,6 +421,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         }}
                         className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
                           (currentSettings.shadowQuality ?? 'medium') === sq
+                            ? 'bg-[#38B98A] text-[#101820]'
+                            : 'bg-[#1C2933] text-[#A9B8C5]'
+                        }`}
+                      >
+                        {sq}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-[#1C2933]">
+                  <div>
+                    <span className="text-[#F4F7FA] font-bold block">Particle Density</span>
+                    <span className="text-[10px] text-[#A9B8C5]">Smoke, sparks and debris drawn</span>
+                  </div>
+                  <div className="flex gap-1">
+                    {(['low', 'medium', 'high'] as const).map(sq => (
+                      <button
+                        key={sq}
+                        onClick={() => {
+                          currentSettings.particleDensity = sq;
+                          notifyChange();
+                        }}
+                        className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                          (currentSettings.particleDensity ?? 'high') === sq
                             ? 'bg-[#38B98A] text-[#101820]'
                             : 'bg-[#1C2933] text-[#A9B8C5]'
                         }`}
