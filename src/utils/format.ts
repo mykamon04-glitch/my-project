@@ -53,3 +53,19 @@ export function getUnitStatusText(command: string | undefined, isMoving?: boolea
       return 'Standing By';
   }
 }
+
+/** Compact display numbers for tight HUD chips: 3,047 / 12.4K / 392K / 1.2M. Exact values stay in detail views. */
+export function formatCompact(n: number | undefined): string {
+  const v = Number.isFinite(n) ? Math.floor(n as number) : 0;
+  const a = Math.abs(v);
+  const sign = v < 0 ? '-' : '';
+  if (a < 10000) return sign + a.toLocaleString('en-US');
+  if (a < 1_000_000) return sign + (a < 100000 ? (a / 1000).toFixed(1).replace(/\.0$/, '') : Math.round(a / 1000)) + 'K';
+  return sign + (a / 1_000_000).toFixed(a < 10_000_000 ? 2 : 1).replace(/\.?0+$/, '') + 'M';
+}
+
+/** Always-signed value (+50 / -120 / 0) for net power or income rates. */
+export function formatSigned(n: number | undefined): string {
+  const v = Math.round(Number.isFinite(n) ? (n as number) : 0);
+  return (v > 0 ? '+' : v < 0 ? '-' : '') + formatCompact(Math.abs(v));
+}

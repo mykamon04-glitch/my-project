@@ -1654,7 +1654,7 @@ export default function App() {
                 <aside
                   role="alert"
                   aria-label="AI construction recommendation"
-                  className="fixed top-14 left-1/2 -translate-x-1/2 z-40 max-w-sm w-[92%] bg-[#101820]/95 backdrop-blur-md border border-[#38bdf8]/60 rounded-xl p-2.5 shadow-2xl flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-auto"
+                  className="fixed top-[var(--hud-top)] left-1/2 -translate-x-1/2 z-40 max-w-sm w-[92%] bg-[#101820]/95 backdrop-blur-md border border-[#38bdf8]/60 rounded-xl p-2.5 shadow-2xl flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-auto"
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="w-8 h-8 rounded-lg bg-[#0284c7]/20 border border-[#0284c7]/50 flex items-center justify-center shrink-0">
@@ -1700,7 +1700,7 @@ export default function App() {
 
               {/* TOP LEFT: MISSION OBJECTIVES CARD (Matching Reference Screenshot c7b881fb) */}
               {!isCinematicMode && (
-                <div className="fixed top-14 left-2 sm:left-4 z-20 pointer-events-auto select-none max-w-[240px]">
+                <div className="fixed top-[var(--hud-top)] left-2 sm:left-4 z-20 pointer-events-auto select-none max-w-[240px] max-[560px]:max-w-[calc(100vw-152px)]">
                   <div className="bg-[#101820]/90 backdrop-blur-md border border-[#1B2730] rounded-2xl p-2.5 shadow-xl font-mono text-xs">
                     <button
                       onClick={() => setShowObjectives(p => !p)}

@@ -37,6 +37,7 @@ import {
 import { GameEngine } from '../../game/engine';
 import { BuildingType } from '../../types/game';
 import { BUILDING_CONFIGS } from '../../data/gameData';
+import { formatCompact, formatSigned } from '../../utils/format';
 
 interface MobileTopHUDProps {
   engine: GameEngine;
@@ -62,6 +63,29 @@ interface MobileTopHUDProps {
   onExitToMenu?: () => void;
   onRefresh?: () => void;
 }
+
+
+const CHIP_TONES = {
+  ok: 'border-[#22C99A]/35 text-[#22C99A]',
+  info: 'border-[#39B8F2]/35 text-[#39B8F2]',
+  warn: 'border-[#F0B84B]/40 text-[#F0B84B]',
+  danger: 'border-[#F06470]/70 bg-[#F06470]/15 text-[#F06470]',
+} as const;
+
+/** One resource chip: icon + value + sub-caption. min-w-0 lets it shrink instead of overflowing. */
+const HudChip: React.FC<{ tone: keyof typeof CHIP_TONES; icon: React.ReactNode; value: React.ReactNode; sub: string; title: string; onClick: () => void }> = ({ tone, icon, value, sub, title, onClick }) => (
+  <button
+    onClick={onClick}
+    title={title}
+    className={`min-w-0 h-10 flex items-center justify-center min-[420px]:justify-start gap-1 px-1 min-[420px]:px-1.5 rounded-xl border bg-[#1B2B3C] active:scale-95 transition-all ${CHIP_TONES[tone]}`}
+  >
+    <span className="hidden min-[420px]:block">{icon}</span>
+    <span className="min-w-0 flex flex-col text-center min-[420px]:text-left leading-none">
+      <span className="truncate text-[12px] font-bold tabular-nums text-[#F1F5F9]">{value}</span>
+      <span className="truncate text-[9px] mt-0.5 tabular-nums text-[#A7B7C7]">{sub}</span>
+    </span>
+  </button>
+);
 
 type DetailModalType = 'credits' | 'power' | 'pop' | 'alert' | 'menu' | 'sandbox' | null;
 
@@ -123,189 +147,118 @@ export const MobileTopHUD: React.FC<MobileTopHUDProps> = ({
 
   return (
     <>
-      {/* 1. AAA MILITARY STRATEGY TOP HUD (Matching Reference Design) */}
-      <header className="fixed top-0 left-0 right-0 z-30 pt-safe pointer-events-auto select-none px-2 py-1.5 max-w-full overflow-hidden">
-        <div className="flex items-center justify-between gap-1.5 w-full max-w-6xl mx-auto bg-[#101820]/95 backdrop-blur-md border border-[#1B2730] px-2.5 py-1.5 rounded-2xl shadow-2xl">
-          {/* LEFT: BRAND INSIGNIA & TITLE */}
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="w-8 h-8 rounded-xl bg-[#1B2730] border border-[#2FB68A]/40 flex items-center justify-center shadow-inner">
-              <Shield className="w-4 h-4 text-[#2FB68A]" />
+      {/* 1. TOP HUD — compact grid: nothing scrolls, every chip shrinks (min-w-0) and abbreviates */}
+      <header
+        className="fixed top-0 inset-x-0 z-30 pointer-events-none select-none"
+        style={{
+          paddingTop: 'max(6px, env(safe-area-inset-top, 6px))',
+          paddingLeft: 'max(8px, env(safe-area-inset-left, 8px))',
+          paddingRight: 'max(8px, env(safe-area-inset-right, 8px))',
+        }}
+      >
+        <div
+          className="pointer-events-auto mx-auto w-full max-w-5xl grid items-center gap-1.5 sm:![grid-template-columns:auto_repeat(4,minmax(0,1fr))_auto] rounded-2xl border border-[#2a3b4f] bg-[#131F2D]/95 backdrop-blur-md p-1.5 shadow-xl"
+          style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr)) auto' }}
+        >
+          {/* Brand */}
+          <div className="hidden sm:flex items-center gap-2 pl-0.5">
+            <div className="w-9 h-9 rounded-xl bg-[#1B2B3C] border border-[#22C99A]/40 flex items-center justify-center">
+              <Shield className="w-4 h-4 text-[#22C99A]" />
             </div>
-            <div className="hidden sm:flex flex-col">
-              <span className="font-display font-bold text-xs tracking-wider text-[#F1F5F7] leading-none">
-                IRON DOMINION
-              </span>
-              <span className="text-[8px] font-mono tracking-widest text-[#2FB68A] uppercase">
-                REAL-TIME STRATEGY
-              </span>
+            <div className="hidden lg:flex flex-col pr-2">
+              <span className="font-display font-bold text-xs tracking-wider text-[#F1F5F9] leading-none">IRON DOMINION</span>
+              <span className="text-[9px] tracking-widest text-[#22C99A] uppercase mt-0.5">Real-time strategy</span>
             </div>
           </div>
 
-          {/* CENTER: RESOURCE STATUS METERS */}
-          <div className="flex items-center gap-1 sm:gap-2 font-mono text-xs overflow-x-auto no-scrollbar">
-            {/* CREDITS CHIP */}
-            <button
-              onClick={() => setActiveModal(activeModal === 'credits' ? null : 'credits')}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-[#1B2730] hover:bg-[#22323e] border border-[#E5A93D]/30 text-[#E5A93D] active:scale-95 transition-all shrink-0 min-h-[36px]"
-              title="Military Credits - Tap for economy breakdown"
-            >
-              <Coins className="w-3.5 h-3.5 text-[#E5A93D]" />
-              <div className="flex flex-col text-left leading-none">
-                <span className="font-bold tabular-nums text-xs">${Math.floor(econ.credits).toLocaleString()}</span>
-                <span className="text-[9px] text-[#A8B6C2] tabular-nums leading-none">+{econ.incomeRate}/m</span>
-              </div>
-            </button>
+          <HudChip
+            tone="warn"
+            title="Military Credits - tap for economy breakdown"
+            onClick={() => setActiveModal(activeModal === 'credits' ? null : 'credits')}
+            icon={<Coins className="w-4 h-4 shrink-0" />}
+            value={`$${formatCompact(econ.credits)}`}
+            sub={`${formatSigned(econ.incomeRate)}/m`}
+          />
+          <HudChip
+            tone={isPowerDeficit ? 'danger' : 'info'}
+            title="Power grid - tap for diagnostics"
+            onClick={() => setActiveModal(activeModal === 'power' ? null : 'power')}
+            icon={<Zap className="w-4 h-4 shrink-0" />}
+            value={<>{formatSigned(econ.powerSupply - econ.powerDemand)}<span className="hidden min-[400px]:inline text-[9px] font-semibold opacity-70"> GW</span></>}
+            sub={`${formatCompact(econ.powerSupply)}/${formatCompact(econ.powerDemand)}`}
+          />
+          <HudChip
+            tone={isPopCapped ? 'warn' : 'ok'}
+            title="Troop capacity"
+            onClick={() => setActiveModal(activeModal === 'pop' ? null : 'pop')}
+            icon={<Users className="w-4 h-4 shrink-0" />}
+            value={`${econ.population}/${econ.populationCap}`}
+            sub="Troops"
+          />
+          <HudChip
+            tone={threatLevel === 'CRITICAL' || threatLevel === 'HIGH' ? 'danger' : threatLevel === 'ELEVATED' ? 'warn' : 'ok'}
+            title="Threat early warning"
+            onClick={() => setActiveModal(activeModal === 'alert' ? null : 'alert')}
+            icon={<AlertTriangle className="w-4 h-4 shrink-0" />}
+            value={String(enemyUnits.length)}
+            sub={threatLevel.charAt(0) + threatLevel.slice(1).toLowerCase()}
+          />
 
-            {/* POWER CHIP */}
-            <button
-              onClick={() => setActiveModal(activeModal === 'power' ? null : 'power')}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-xl border active:scale-95 transition-all shrink-0 min-h-[36px] ${
-                isPowerDeficit
-                  ? 'bg-[#D94F59]/20 border-[#D94F59] text-[#D94F59]'
-                  : 'bg-[#1B2730] hover:bg-[#22323e] border-[#4B91B5]/30 text-[#4B91B5]'
-              }`}
-              title="Power Grid - Tap for diagnostics"
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <div className="flex flex-col text-left leading-none">
-                <span className="font-bold tabular-nums text-xs">
-                  {econ.powerSupply - econ.powerDemand > 0 ? '+' : ''}
-                  {econ.powerSupply - econ.powerDemand} GW
-                </span>
-                <span className="text-[9px] text-[#A8B6C2] tabular-nums leading-none">
-                  {econ.powerSupply}/{econ.powerDemand}
-                </span>
-              </div>
-            </button>
-
-            {/* POPULATION CHIP */}
-            <button
-              onClick={() => setActiveModal(activeModal === 'pop' ? null : 'pop')}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-xl border active:scale-95 transition-all shrink-0 min-h-[36px] ${
-                isPopCapped
-                  ? 'bg-[#E5A93D]/20 border-[#E5A93D] text-[#E5A93D]'
-                  : 'bg-[#1B2730] hover:bg-[#22323e] border-[#2FB68A]/30 text-[#2FB68A]'
-              }`}
-              title="Troop Personnel Capacity"
-            >
-              <Users className="w-3.5 h-3.5" />
-              <div className="flex flex-col text-left leading-none">
-                <span className="font-bold tabular-nums text-xs">{econ.population}/{econ.populationCap}</span>
-                <span className="text-[9px] text-[#A8B6C2] leading-none">TROOPS</span>
-              </div>
-            </button>
-
-            {/* THREAT ALERT CHIP */}
-            <button
-              onClick={() => setActiveModal(activeModal === 'alert' ? null : 'alert')}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded-xl border active:scale-95 transition-all text-xs font-bold shrink-0 min-h-[36px] ${
-                threatLevel === 'CRITICAL' || threatLevel === 'HIGH'
-                  ? 'bg-[#D94F59]/20 border-[#D94F59] text-[#D94F59]'
-                  : 'bg-[#1B2730] border-[#E5A93D]/40 text-[#E5A93D]'
-              }`}
-              title="Threat Early Warning"
-            >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span className="tabular-nums">Threat {enemyUnits.length > 0 ? enemyUnits.length : '0'}</span>
-            </button>
-          </div>
-
-          {/* RIGHT: MENU HAMBURGER & RADAR */}
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              onClick={onToggleRadar}
-              className={`w-9 h-9 rounded-xl border flex items-center justify-center active:scale-95 transition-all ${
-                isRadarVisible
-                  ? 'bg-[#4B91B5]/20 border-[#4B91B5] text-[#4B91B5]'
-                  : 'bg-[#1B2730] border-[#1B2730] text-[#A8B6C2]'
-              }`}
-              title="Toggle Minimap Radar"
-            >
-              <Radio className="w-4 h-4" />
-            </button>
-
-            <button
-              onClick={onOpenSettings}
-              className="w-9 h-9 rounded-xl bg-[#1B2730] hover:bg-[#22323e] border border-[#2c3e50] flex items-center justify-center text-[#F1F5F7] active:scale-95 transition-all"
-              title="Main Menu"
-            >
-              <Menu className="w-4 h-4 text-[#2FB68A]" />
-            </button>
-          </div>
+          <button
+            onClick={onOpenSettings}
+            className="w-10 h-10 rounded-xl bg-[#1B2B3C] hover:bg-[#223449] border border-[#2a3b4f] flex items-center justify-center active:scale-95 transition-all"
+            title="Menu"
+            aria-label="Menu"
+          >
+            <Menu className="w-[18px] h-[18px] text-[#F1F5F9]" />
+          </button>
         </div>
 
-        {/* TIER 2: FLOATING CAMERA QUICK CONTROLS */}
-        <div className="flex items-center gap-1.5 pt-1.5 max-w-6xl mx-auto text-[10px] font-mono">
-          <div className="flex items-center gap-1 bg-[#101820]/90 backdrop-blur-md px-2 py-1 rounded-xl border border-[#1B2730] shadow-md">
-              {/* HQ */}
-              <button
-                onClick={onCenterHQ}
-                className="px-2 py-0.5 rounded bg-[#141d27] hover:bg-[#1a2634] text-[#38b98a] font-bold flex items-center gap-1 active:scale-95 transition-transform"
-                title="Center camera on primary Headquarters"
-              >
-                <Crosshair className="w-3 h-3" />
-                <span>HQ</span>
-              </button>
-
-              {/* FIT BASE */}
-              <button
-                onClick={onFitBase}
-                className="px-2 py-0.5 rounded bg-[#141d27] hover:bg-[#1a2634] text-[#36c9e8] font-bold flex items-center gap-1 active:scale-95 transition-transform"
-                title="Fit entire friendly base within screen"
-              >
-                <Layers className="w-3 h-3" />
-                <span>FIT</span>
-              </button>
-
-              {/* FOLLOW TROOPS */}
-              <button
-                onClick={onToggleFollow}
-                className={`px-2 py-0.5 rounded font-bold flex items-center gap-1 active:scale-95 transition-all ${
-                  isFollowing
-                    ? 'bg-[#38b98a]/25 text-[#38b98a] border border-[#38b98a]/60'
-                    : 'bg-[#141d27] hover:bg-[#1a2634] text-[#94a3b8]'
-                }`}
-                title="Lock camera to follow selected units"
-              >
-                <Eye className="w-3 h-3" />
-                <span>FOLLOW</span>
-              </button>
-
-              {/* ZOOM CYCLE */}
-              <button
-                onClick={onCycleZoom}
-                className="px-1.5 py-0.5 rounded bg-[#141d27] hover:bg-[#1a2634] text-[#f4f7fa] font-bold active:scale-95"
-                title="Cycle Tactical Zoom Levels"
-              >
-                <span>{Math.round((currentZoom || 1.0) * 100)}%</span>
-              </button>
-
-              {/* 3D CAMERA ORBIT (45 DEGREE STEP) */}
-              {is3D && onRotateCamera && (
-                <button
-                  onClick={onRotateCamera}
-                  className="px-1.5 py-0.5 rounded bg-[#141d27] hover:bg-[#1a2634] text-[#36c9e8] font-bold flex items-center gap-1 active:scale-95"
-                  title="Rotate 3D Tactical Battlefield View 45°"
-                >
-                  <Compass className="w-3 h-3" />
-                  <span className="hidden xs:inline">45°</span>
-                </button>
-              )}
-            </div>
-
-            {/* SANDBOX / DEV TOOLS DRAWER TRIGGER (Only in Sandbox mode) */}
-            {engine.mode === 'sandbox' && (
-              <button
-                onClick={() => setActiveModal('sandbox')}
-                className="px-2 py-0.5 rounded-lg bg-amber-950/80 border border-amber-500/50 text-amber-300 font-bold flex items-center gap-1 shadow-md active:scale-95 shrink-0"
-                title="Developer Sandbox Tools"
-              >
-                <Wrench className="w-3 h-3 text-amber-400" />
-                <span>DEV TOOLS</span>
+        {/* TIER 2: camera quick controls (+ radar toggle moved here so the resource row never overflows) */}
+        <div className="pointer-events-none flex flex-wrap items-center gap-1.5 pt-1.5 max-w-5xl mx-auto text-[11px] font-semibold">
+          <div className="pointer-events-auto flex items-center gap-1 bg-[#131F2D]/90 backdrop-blur-md p-1 rounded-xl border border-[#2a3b4f] shadow-md">
+            <button onClick={onCenterHQ} className="h-8 px-2 rounded-lg bg-[#1B2B3C] text-[#22C99A] flex items-center gap-1 active:scale-95 transition-transform" title="Center camera on Headquarters">
+              <Crosshair className="w-3.5 h-3.5" /><span className="hidden min-[400px]:inline">HQ</span>
+            </button>
+            <button onClick={onFitBase} className="h-8 px-2 rounded-lg bg-[#1B2B3C] text-[#39B8F2] flex items-center gap-1 active:scale-95 transition-transform" title="Fit entire base on screen">
+              <Layers className="w-3.5 h-3.5" /><span className="hidden min-[400px]:inline">FIT</span>
+            </button>
+            <button
+              onClick={onToggleFollow}
+              className={`h-8 px-2 rounded-lg flex items-center gap-1 active:scale-95 transition-all ${isFollowing ? 'bg-[#22C99A]/25 text-[#22C99A] ring-1 ring-[#22C99A]/60' : 'bg-[#1B2B3C] text-[#A7B7C7]'}`}
+              title="Lock camera to follow selected units"
+            >
+              <Eye className="w-3.5 h-3.5" /><span className="hidden min-[400px]:inline">FOLLOW</span>
+            </button>
+            <button onClick={onCycleZoom} className="h-8 px-2 rounded-lg bg-[#1B2B3C] text-[#F1F5F9] tabular-nums active:scale-95" title="Cycle zoom">
+              {Math.round((currentZoom || 1.0) * 100)}%
+            </button>
+            {is3D && onRotateCamera && (
+              <button onClick={onRotateCamera} className="h-8 px-2 rounded-lg bg-[#1B2B3C] text-[#39B8F2] flex items-center gap-1 active:scale-95" title="Rotate view 45°">
+                <Compass className="w-3.5 h-3.5" /><span className="hidden min-[400px]:inline">45°</span>
               </button>
             )}
+            <button
+              onClick={onToggleRadar}
+              className={`h-8 px-2 rounded-lg flex items-center gap-1 active:scale-95 transition-all ${isRadarVisible ? 'bg-[#39B8F2]/20 text-[#39B8F2] ring-1 ring-[#39B8F2]/50' : 'bg-[#1B2B3C] text-[#A7B7C7]'}`}
+              title="Toggle tactical radar"
+              aria-pressed={isRadarVisible}
+            >
+              <Radio className="w-3.5 h-3.5" /><span className="hidden min-[400px]:inline">RADAR</span>
+            </button>
           </div>
-        </header>
+
+          {engine.mode === 'sandbox' && (
+            <button
+              onClick={() => setActiveModal('sandbox')}
+              className="pointer-events-auto h-10 px-2.5 rounded-xl bg-[#F0B84B]/15 border border-[#F0B84B]/50 text-[#F0B84B] flex items-center gap-1 active:scale-95"
+              title="Developer sandbox tools"
+            >
+              <Wrench className="w-3.5 h-3.5" /><span>DEV TOOLS</span>
+            </button>
+          )}
+        </div>
+      </header>
 
       {/* 2. CONTEXTUAL DETAIL POPOVERS / MODALS */}
       {activeModal && (

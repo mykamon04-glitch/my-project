@@ -1,6 +1,23 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+:root {
+  /* Iron Dominion design system */
+  --id-bg: #0B121C;
+  --id-surface: #131F2D;
+  --id-elevated: #1B2B3C;
+  --id-border: #2a3b4f;
+  --id-accent: #22C99A;
+  --id-accent-2: #39B8F2;
+  --id-warn: #F0B84B;
+  --id-danger: #F06470;
+  --id-text: #F1F5F9;
+  --id-text-2: #A7B7C7;
+  --id-radius: 14px;
+  /* Height of the two-row top HUD (resource bar + camera tools). Floating panels hang below it. */
+  --hud-top: calc(env(safe-area-inset-top, 0px) + 106px);
+}
+
 @layer base {
   *, ::before, ::after {
     box-sizing: border-box;

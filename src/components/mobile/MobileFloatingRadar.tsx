@@ -349,7 +349,7 @@ export const MobileFloatingRadar: React.FC<MobileFloatingRadarProps> = ({
     <>
       {/* 1. PERMANENT LIVE MINI RADAR (Positioned neatly in upper-right) */}
       <div
-        className="fixed top-16 right-2 z-25 pointer-events-auto select-none bg-[#0d141d]/95 backdrop-blur-md border border-[#1C2933] rounded-xl shadow-2xl p-1 flex flex-col gap-1 font-mono text-[9px] text-[#F4F7FA]"
+        className="fixed top-[var(--hud-top)] right-2 z-25 pointer-events-auto select-none bg-[#0d141d]/95 backdrop-blur-md border border-[#1C2933] rounded-xl shadow-2xl p-1 flex flex-col gap-1 font-mono text-[9px] text-[#F4F7FA]"
         style={{ width: `${miniW + 8}px` }}
       >
         {/* Header Strip with Expand & HQ Center */}
@@ -400,7 +400,7 @@ export const MobileFloatingRadar: React.FC<MobileFloatingRadarProps> = ({
 
       {/* 2. TACTICAL INFO POPOVER (Triggered by Long-Press on Mini Radar) */}
       {showTacticalInfo && (
-        <div className="fixed top-32 right-2 z-35 w-52 bg-[#0d141d]/95 backdrop-blur-md border border-[#1C2933] rounded-xl p-2.5 shadow-2xl font-mono text-[10px] text-[#F4F7FA] space-y-2 pointer-events-auto animate-fadeIn">
+        <div className="fixed top-[calc(var(--hud-top)+140px)] right-2 z-35 w-52 bg-[#0d141d]/95 backdrop-blur-md border border-[#1C2933] rounded-xl p-2.5 shadow-2xl font-mono text-[10px] text-[#F4F7FA] space-y-2 pointer-events-auto animate-fadeIn">
           <div className="flex items-center justify-between border-b border-[#1C2933] pb-1">
             <span className="font-bold text-[#38B98A] flex items-center gap-1">
               <Compass className="w-3 h-3" /> Tactical Intel
