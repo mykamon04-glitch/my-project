@@ -1,0 +1,1140 @@
+IRON DOMINION — ULTIMATE RTS EVOLUTION
+
+MASTER PROMPT V2.0 — Complete Game Enhancement, Visual Overhaul, Advanced Military Systems & True Full-Screen Gameplay
+
+YOUR ROLE
+
+Act as an elite AAA Game Director, Principal Gameplay Engineer, Senior Full-Stack Game Developer, Real-Time Strategy Game Designer, Professional 3D/2.5D Environment Artist, Technical Artist, Combat Systems Engineer, Military Unit Designer, AI Engineer, UI/UX Architect, Mobile Game Developer, Graphics Optimization Engineer, and Quality Assurance Lead.
+
+You are upgrading my existing playable military strategy game, IRON DOMINION, currently built inside Google AI Studio.
+
+This is an improvement of the EXISTING PROJECT, not a request to create a separate demonstration.
+
+PRIMARY OBJECTIVE:
+
+Transform Iron Dominion into a visually impressive, professionally designed, highly interactive, feature-rich, responsive real-time strategy game featuring military bases, advanced soldiers, tanks, armored vehicles, aircraft, intelligent enemies, resource management, tactical squad control, realistic-looking battlefield environments, and functional combat systems.
+
+NON-NEGOTIABLE REQUIREMENTS:
+
+1. Preserve existing working game logic, files, and progress wherever possible.
+2. Inspect the current project before modifying architecture.
+3. Improve existing gameplay instead of replacing it with static graphics.
+4. Every new troop, vehicle, building, upgrade, and command must have functional gameplay logic.
+5. No fake buttons, decorative units, nonfunctional menus, or simulated gameplay.
+6. Do not sacrifice performance for graphics.
+7. Use free, open-source, original, or appropriately licensed assets.
+8. Do not require paid APIs, paid AI models, or paid asset services.
+9. Keep the game playable on desktop, laptop, tablet, and mobile.
+10. Implement improvements in verified phases without breaking the game.
+
+---
+
+1. COMPLETE VISUAL GRAPHICS OVERHAUL
+
+The current graphics are too simplistic, with flat terrain tiles, tiny troops, small buildings, and limited environmental detail.
+
+Replace the existing visual presentation with a cohesive, professional military strategy art direction.
+
+Desired visual quality
+
+Create a polished 2.5D/isometric military RTS experience inspired by the general production quality of modern strategy games, without copying proprietary assets or interfaces.
+
+Implement:
+
+- Detailed military bases with recognizable structures.
+- Clearly identifiable infantry silhouettes.
+- Visually distinct tanks and armored vehicles.
+- Animated vehicle turrets and tracks.
+- Realistic-looking roads and terrain transitions.
+- Improved lighting, shadows, and environmental depth.
+- High-quality explosions, smoke, fire, and projectiles.
+- Visible damage on vehicles and buildings.
+- Professional building construction animations.
+- Tactical indicators, selection rings, and health bars.
+- Zoom-dependent visual detail.
+- Smooth animation transitions.
+
+Rendering requirements
+
+Use the existing engine if it can support the required improvements.
+
+If the current game uses Canvas or basic React rendering, evaluate whether Phaser, PixiJS, or Babylon.js would provide meaningful improvements.
+
+Do not migrate engines unnecessarily.
+
+For 2.5D, use high-quality sprite atlases, layered terrain, animated units, lighting effects, and depth sorting.
+
+For 3D, use optimized models, instancing, LOD systems, and efficient lighting.
+
+Never present a 2D implementation as true 3D.
+
+---
+
+2. ADVANCED MILITARY BATTLEFIELD MAP
+
+Completely redesign the current flat, square-looking battlefield.
+
+The map must feel like a real military conflict zone rather than a simple grid.
+
+Terrain environments
+
+Introduce multiple terrain types:
+
+- Grasslands and open fields.
+- Dense forests.
+- Mountainous regions.
+- Desert warfare zones.
+- Snow-covered battlefields.
+- Urban military zones.
+- Abandoned industrial areas.
+- River valleys.
+- Coastal military regions.
+- Destroyed cities.
+- Military outposts.
+- Strategic bridges and tunnels.
+
+Environmental features
+
+Add:
+
+- Natural hills and elevation differences.
+- Trees, rocks, bushes, and vegetation.
+- Roads, dirt tracks, and highways.
+- Rivers, lakes, and bridges.
+- Abandoned vehicles and military wreckage.
+- Destroyed buildings.
+- Military checkpoints.
+- Civilian structures as environmental objects.
+- Resource deposits.
+- Capturable strategic locations.
+
+Map generation
+
+Implement procedural terrain generation with configurable seeds.
+
+Maps must have:
+
+- Valid playable starting positions.
+- Balanced resource distribution.
+- Traversable routes between opposing bases.
+- Meaningful choke points.
+- Areas suitable for defensive construction.
+- Fog of war.
+- Strategic high-ground advantages.
+
+Map size options
+
+- Small: Quick battles.
+- Medium: Standard matches.
+- Large: Extended warfare.
+- Massive: Large-scale strategic battles, only when device performance permits.
+
+Include a map-selection interface with actual previews and terrain descriptions.
+
+Camera
+
+Implement:
+
+- Smooth dragging to pan.
+- Mouse-wheel and pinch-to-zoom.
+- Double-tap to focus on a unit.
+- Follow-selected-unit option.
+- Return-to-headquarters button.
+- Camera rotation where supported by the rendering engine.
+- Minimap navigation.
+- Smooth transitions between locations.
+
+Prevent the camera from leaving playable map boundaries.
+
+---
+
+3. TRUE FULL-SCREEN IMMERSIVE GAMEPLAY
+
+This is a critical requirement.
+
+The current Google AI Studio preview displays the game inside a constrained interface, with excessive empty space and very small controls.
+
+Redesign the game to use the maximum available display area.
+
+Full-screen behavior
+
+- Add a functional Full Screen button.
+- Use the browser Fullscreen API when supported and permitted.
+- Make the game canvas fill the available viewport.
+- Support landscape gameplay on mobile.
+- Detect orientation changes.
+- Recalculate viewport and camera dimensions automatically.
+- Handle mobile safe areas and display cutouts.
+- Hide unnecessary internal navigation during gameplay.
+- Keep all essential controls accessible.
+- Restore the normal layout when exiting full screen.
+
+On supported browsers, allow landscape orientation locking after the player enters full screen.
+
+If the Google AI Studio preview frame prevents true device-level full screen, provide an option to open the deployed game in its own browser tab.
+
+Do not claim to hide browser or Google AI Studio interface elements that the game does not control.
+
+Mobile-specific layout
+
+In landscape mode:
+
+- Battlefield should occupy most of the screen.
+- Resources should appear in a compact top bar.
+- Minimap should be in a corner.
+- Selected-unit commands should appear in a collapsible bottom panel.
+- Construction and recruitment controls should use expandable menus.
+- Essential controls should remain large enough for touch input.
+
+In portrait mode:
+
+- Adapt the layout without stretching the battlefield.
+- Offer a landscape recommendation.
+- Keep the game functional if orientation locking is unavailable.
+
+Immersive mode
+
+Add a dedicated cinematic gameplay mode that hides nonessential panels while retaining compact access to core commands.
+
+---
+
+4. PROFESSIONAL UI/UX REDESIGN
+
+Replace the current tiny, crowded controls with a modern tactical command interface.
+
+Design language
+
+Use:
+
+- Dark graphite and gunmetal surfaces.
+- Tactical green and cyan for friendly information.
+- Amber for warnings.
+- Red for enemy threats.
+- Clear, readable typography.
+- Subtle glass-like panels where performance allows.
+- Consistent iconography.
+- Professional microanimations.
+- Strong contrast.
+- Clear visual hierarchy.
+
+Avoid excessive glowing effects, tiny fonts, unnecessary borders, and cluttered dashboards.
+
+Main menu
+
+Design a professional animated main menu with:
+
+- Continue Game.
+- New Battle.
+- Campaign.
+- Skirmish.
+- Base Defense.
+- Sandbox.
+- Load Game.
+- Settings.
+- Tutorial.
+- Exit to Menu.
+
+Include an original animated battlefield background and polished transitions.
+
+In-game HUD
+
+Top Resource Bar
+
+Show:
+
+- Credits.
+- Income per minute.
+- Power generated/consumed.
+- Population/capacity.
+- Army strength.
+- Research status.
+- Match timer.
+
+Left or contextual panel
+
+Show:
+
+- Selected unit or building.
+- Health and armor.
+- Weapon and abilities.
+- Current orders.
+- Upgrade options.
+
+Bottom Command Bar
+
+Organize:
+
+- Build.
+- Infantry.
+- Vehicles.
+- Air Units.
+- Defenses.
+- Research.
+- Squad Commands.
+
+Minimap
+
+Show:
+
+- Friendly bases.
+- Friendly troops.
+- Discovered enemies.
+- Captured locations.
+- Incoming threats.
+- Camera viewport.
+
+Support clicking or tapping the minimap to move the camera.
+
+Context-sensitive interface
+
+Only display relevant commands for the selected entity.
+
+For example:
+
+- Selecting a soldier reveals movement, combat, and stance commands.
+- Selecting a barracks reveals infantry recruitment.
+- Selecting a factory reveals vehicle production.
+- Selecting an engineer reveals repair and capture commands.
+- Selecting a headquarters reveals construction and strategic options.
+
+Every visible control must execute an actual game action.
+
+---
+
+5. ADVANCED TROOP SELECTION & SQUAD CONTROL
+
+Completely improve unit selection.
+
+This is one of the highest-priority gameplay features.
+
+Individual selection
+
+Allow the player to:
+
+- Tap or click one soldier.
+- Select one tank.
+- Select one building.
+- Inspect health, weapon, rank, and abilities.
+- Issue direct commands.
+
+Multi-unit selection
+
+Implement:
+
+- Drag-selection rectangle.
+- Shift-click selection.
+- Touch-based multi-select mode.
+- Select all visible units.
+- Select all units of a particular class.
+- Select all military units.
+- Select idle troops.
+- Select damaged units.
+- Select nearby units.
+
+Squad management
+
+Support:
+
+- Creating custom squads.
+- Assigning control groups 1–9.
+- Renaming squads.
+- Adding/removing squad members.
+- Selecting squads instantly.
+- Independent squad orders.
+- Squad leader assignment.
+- Squad formation changes.
+
+Formations
+
+Add:
+
+- Line.
+- Column.
+- Wedge.
+- Defensive circle.
+- Spread.
+- Tight formation.
+- Armored spearhead.
+
+Formations must affect actual movement destinations and spacing.
+
+Tactical commands
+
+Implement:
+
+- Move.
+- Attack.
+- Attack-Move.
+- Hold Position.
+- Patrol.
+- Guard.
+- Follow.
+- Retreat.
+- Defend Area.
+- Focus Fire.
+- Stop.
+- Use Ability.
+- Capture Objective.
+- Repair.
+- Board Transport.
+- Unload Transport.
+
+Units must visibly obey commands through pathfinding, animation, and state changes.
+
+Advanced control options
+
+Add:
+
+- Command queue using Shift.
+- Waypoint placement.
+- Group attack commands.
+- Automatic target prioritization.
+- Aggressive, defensive, and passive stances.
+- Squad retreat thresholds.
+- Independent control of different groups.
+
+On mobile, provide a dedicated command mode with large touch targets.
+
+Do not rely exclusively on desktop keyboard shortcuts.
+
+---
+
+6. EXPAND THE INFANTRY SYSTEM
+
+Keep all existing infantry and introduce additional specialized classes.
+
+Every unit requires unique statistics, training cost, production time, visual identity, animations, combat behavior, and abilities.
+
+Standard infantry
+
+1. Rifleman — General-purpose soldier.
+2. Heavy Gunner — Suppressive fire.
+3. Sniper — Long-range precision.
+4. Combat Medic — Heals infantry.
+5. Combat Engineer — Repairs and captures.
+6. Rocket Soldier — Anti-armor.
+7. Scout — Reconnaissance.
+
+New advanced infantry
+
+8. Assault Trooper — Close-range assault.
+9. Commando — Elite infiltration and combat.
+10. Grenadier — Area explosive damage.
+11. Anti-Tank Specialist — Heavy anti-vehicle weapons.
+12. Anti-Air Specialist — Portable anti-air launcher.
+13. Shield Infantry — Defensive frontline unit.
+14. Field Mechanic — Repairs vehicles.
+15. Recon Specialist — Extended detection.
+16. Flamethrower Unit — Short-range area damage.
+17. Combat Drone Operator — Deploys reconnaissance drones.
+18. Heavy Armor Soldier — High protection, reduced speed.
+19. Electronic Warfare Specialist — Temporarily disrupts eligible electronic systems.
+20. Elite Vanguard — High-tier veteran infantry.
+
+Infantry behavior
+
+Implement:
+
+- Running and walking animations.
+- Cover seeking.
+- Target tracking.
+- Reload and attack cooldowns.
+- Health and armor.
+- Combat experience.
+- Rank progression.
+- Special abilities.
+- Retreat behavior.
+- Squad cooperation.
+
+Do not introduce a unit until its gameplay behavior is functional.
+
+---
+
+7. EXPAND TANKS & MILITARY VEHICLES
+
+Keep existing vehicles and introduce a broader military vehicle system.
+
+Light vehicles
+
+- Recon Buggy.
+- Scout Jeep.
+- Armored Patrol Vehicle.
+- Light Tank.
+- Mobile Radar Vehicle.
+
+Medium vehicles
+
+- Main Battle Tank.
+- Infantry Fighting Vehicle.
+- Armored Personnel Carrier.
+- Anti-Air Vehicle.
+- Mobile Repair Vehicle.
+
+Heavy vehicles
+
+- Heavy Tank.
+- Siege Tank.
+- Rocket Artillery Vehicle.
+- Heavy Missile Carrier.
+- Armored Command Vehicle.
+
+Advanced vehicles
+
+- Stealth Recon Vehicle.
+- Electronic Warfare Vehicle.
+- Amphibious Assault Vehicle.
+- Self-Propelled Artillery.
+- Experimental Superheavy Tank.
+
+Vehicle mechanics
+
+Each vehicle must have:
+
+- Hull health.
+- Armor classification.
+- Weapon damage.
+- Weapon range.
+- Movement speed.
+- Turret rotation.
+- Reload time.
+- Vision range.
+- Production cost.
+- Manufacturing time.
+- Upgrade levels.
+- Destruction animations.
+
+Vehicles should have differentiated movement, acceleration, turning, and weapon behavior.
+
+APCs must genuinely transport infantry, not simply display a transport button.
+
+Repair vehicles must restore actual vehicle health using defined rules.
+
+---
+
+8. AIR FORCE & DRONE SYSTEM
+
+Introduce a new military aviation branch after ground combat is stable.
+
+Air units
+
+- Recon Drone.
+- Combat Drone.
+- Transport Helicopter.
+- Attack Helicopter.
+- Fighter Aircraft.
+- Bomber Aircraft.
+- Heavy Gunship.
+
+Functional mechanics
+
+Implement:
+
+- Air movement.
+- Flight paths.
+- Aircraft health.
+- Air-to-ground combat.
+- Anti-air targeting.
+- Aircraft production.
+- Landing and rearming where applicable.
+- Fuel or sortie limitations where required by balance.
+- Aircraft destruction.
+
+Aircraft must use a distinct air movement layer rather than behaving like ground vehicles.
+
+---
+
+9. EXPAND MILITARY BASE BUILDINGS
+
+Keep all existing buildings and add more construction options.
+
+Command and infrastructure
+
+- Headquarters.
+- Advanced Command Center.
+- Power Plant.
+- Advanced Reactor.
+- Radar Station.
+- Communications Center.
+- Supply Depot.
+- Population Housing.
+- Repair Station.
+
+Economy
+
+- Credit Generator.
+- Advanced Credit Generator.
+- Resource Refinery.
+- Mining Station.
+- Resource Storage.
+- Trade Center.
+
+Military production
+
+- Infantry Barracks.
+- Advanced Infantry Academy.
+- Vehicle Factory.
+- Heavy Armor Factory.
+- Artillery Workshop.
+- Airfield.
+- Drone Factory.
+- Helicopter Hangar.
+
+Defense
+
+- Machine Gun Tower.
+- Sniper Tower.
+- Anti-Tank Turret.
+- Missile Turret.
+- Anti-Air Tower.
+- Artillery Defense Platform.
+- Defensive Bunker.
+- Reinforced Wall.
+- Military Gate.
+- Shield Generator.
+- Sensor Tower.
+
+Technology
+
+- Research Laboratory.
+- Advanced Weapons Laboratory.
+- Armor Research Facility.
+- Drone Technology Center.
+- Electronic Warfare Laboratory.
+
+Building interactions
+
+Each building must support relevant actions:
+
+- Construct.
+- Upgrade.
+- Repair.
+- Demolish.
+- Inspect.
+- Set Rally Point.
+- Manage Production Queue.
+- Pause Production where appropriate.
+
+Construction must require valid placement, resources, and construction time.
+
+Buildings must have meaningful footprints, collision, hit points, power usage, and destruction states.
+
+---
+
+10. ADVANCED BASE BUILDING EXPERIENCE
+
+Improve construction interaction.
+
+When selecting a building:
+
+1. Show a transparent placement preview.
+2. Highlight valid and invalid positions.
+3. Snap to the construction grid where appropriate.
+4. Prevent overlap with existing structures.
+5. Check terrain and build-radius restrictions.
+6. Display cost and power requirements.
+7. Confirm placement.
+8. Deduct credits.
+9. Start actual construction.
+10. Display construction progress.
+11. Activate the building when complete.
+
+Add:
+
+- Building rotation.
+- Multiple-building placement.
+- Construction queue.
+- Building upgrades.
+- Wall-drag construction.
+- Repair-all damaged structures where affordable.
+- Optional building blueprints.
+
+Use a clear visual distinction between construction sites and completed buildings.
+
+---
+
+11. SMARTER ENEMY ARTIFICIAL INTELLIGENCE
+
+Improve enemy AI beyond simply sending troops toward the player.
+
+Enemy factions must operate through real economic and military decisions.
+
+Strategic AI
+
+Enemy AI should:
+
+- Generate resources.
+- Construct production buildings.
+- Recruit balanced armies.
+- Scout the map.
+- Identify threats.
+- Defend strategic locations.
+- Launch coordinated attacks.
+- Repair damaged structures.
+- Replace destroyed units.
+- Expand territory.
+- Adapt to player tactics.
+
+Tactical AI
+
+Implement:
+
+- Target prioritization.
+- Unit grouping.
+- Defensive positioning.
+- Retreat decisions.
+- Flanking when map geometry allows.
+- Reinforcement coordination.
+- Counter-unit selection.
+- Attack timing.
+
+Difficulty
+
+Easy — Reduced aggression and slower decisions.
+
+Normal — Balanced economy and tactics.
+
+Hard — Better coordination and faster reactions.
+
+Expert — Advanced scouting, army composition, resource management, and coordinated assaults.
+
+AI must obey the same fundamental game rules as the player.
+
+Do not implement fake AI difficulty by making enemies visually stronger without defining gameplay modifiers.
+
+---
+
+12. ADVANCED COMBAT & DESTRUCTION
+
+Upgrade the existing combat presentation and calculations.
+
+Combat systems
+
+- Weapon damage.
+- Armor resistance.
+- Effective range.
+- Projectile speed.
+- Projectile collision.
+- Attack cooldowns.
+- Line-of-sight checks.
+- Cover modifiers.
+- Suppression effects.
+- Area damage.
+- Splash damage.
+- Target prioritization.
+- Veteran experience.
+
+Visual feedback
+
+Add:
+
+- Muzzle flashes.
+- Projectile trails.
+- Impact sparks.
+- Explosion effects.
+- Dust clouds.
+- Smoke.
+- Fire.
+- Tank wreckage.
+- Building destruction stages.
+- Damage indicators.
+- Screen shake with adjustable intensity.
+
+Destroyed units must be removed from active gameplay state.
+
+Destroyed buildings must stop producing resources, power, or units.
+
+Visual effects must accurately represent real combat events.
+
+---
+
+13. ECONOMY & TECHNOLOGY TREE
+
+Improve the economy and research systems.
+
+Economy
+
+Display:
+
+- Current credits.
+- Income per minute.
+- Power supply.
+- Power demand.
+- Population usage.
+- Population capacity.
+- Resource generator efficiency.
+
+Add resource-producing structures with upgradeable production rates.
+
+Technology progression
+
+Create a visual research tree containing:
+
+- Infantry upgrades.
+- Vehicle armor.
+- Advanced weapons.
+- Power efficiency.
+- Resource generation.
+- Defensive technology.
+- Aircraft research.
+- Radar improvements.
+- Advanced military units.
+
+Research must consume resources and require time.
+
+Unlocked technology must affect real unit statistics or availability.
+
+---
+
+14. EXPANDED GAME MODES
+
+Skirmish
+
+Customizable battles with selectable maps, starting resources, difficulty, and opposing factions.
+
+Campaign
+
+Mission-based military progression with objectives, briefings, and unlockable technologies.
+
+Base Defense
+
+Survive increasingly difficult enemy waves while upgrading defenses.
+
+Sandbox
+
+Unlimited credits, free construction, unit spawning, and experimentation.
+
+Custom Battle
+
+Allow players to configure:
+
+- Map.
+- Terrain.
+- Number of AI enemies.
+- AI difficulty.
+- Starting resources.
+- Population limits.
+- Fog of war.
+- Victory conditions.
+
+Do not claim online multiplayer is available until real networking has been implemented and tested.
+
+---
+
+15. GRAPHICS SETTINGS & PERFORMANCE
+
+Create actual adjustable graphics settings.
+
+Graphics quality
+
+- Low.
+- Medium.
+- High.
+- Ultra, when supported by device capabilities.
+
+Adjustable settings
+
+- Render resolution.
+- Shadow quality.
+- Particle density.
+- Terrain detail.
+- Effects quality.
+- Animation quality.
+- Camera sensitivity.
+- Zoom sensitivity.
+- Frame-rate limit.
+- Audio volume.
+
+Performance optimization
+
+Use:
+
+- Sprite batching or GPU instancing.
+- Object pooling.
+- Asset caching.
+- Spatial partitioning.
+- Efficient pathfinding.
+- Viewport culling.
+- Level of detail.
+- Optimized game-state updates.
+
+Use adaptive graphics on mobile to maintain smooth gameplay.
+
+Avoid excessive memory consumption and unnecessary rerenders.
+
+---
+
+16. SAVE, LOAD & GAME CONTINUITY
+
+Implement a reliable save/load system.
+
+Save:
+
+- Current game mode.
+- Map seed and terrain state.
+- Buildings and health.
+- Unit positions and health.
+- Credits and economy.
+- Research progress.
+- Production queues.
+- AI state.
+- Captured locations.
+- Match progress.
+
+Use IndexedDB or an equivalent appropriate local persistence system.
+
+Add:
+
+- Manual Save.
+- Autosave.
+- Continue Game.
+- Multiple Save Slots.
+- Load Game.
+- Restart Match.
+
+Validate restored gameplay state before resuming the simulation.
+
+---
+
+17. MOBILE GAMEPLAY IMPROVEMENTS
+
+The mobile experience must not be a compressed desktop interface.
+
+Implement a dedicated responsive control system.
+
+Mobile controls
+
+- Tap to select.
+- Long-press for contextual commands.
+- Drag to move camera.
+- Pinch to zoom.
+- Two-finger gestures where appropriate.
+- Multi-select mode.
+- Squad selection buttons.
+- Large contextual action buttons.
+- Expandable construction menu.
+- Expandable recruitment menu.
+- Minimap navigation.
+
+Prevent touch gestures from accidentally selecting units or placing buildings.
+
+Ensure that construction, unit selection, combat, and squad commands remain practical on a phone.
+
+---
+
+18. NEW GAME OPTIONS
+
+Add a complete settings menu with functional controls.
+
+Gameplay
+
+- AI difficulty.
+- Game speed.
+- Autosave.
+- Unit behavior.
+- Auto-attack settings.
+- Health-bar visibility.
+- Damage numbers.
+- Selection indicators.
+- Fog of war.
+
+Display
+
+- Full Screen.
+- Resolution scaling.
+- Graphics preset.
+- UI scale.
+- Camera zoom.
+- Colorblind-friendly team indicators.
+
+Audio
+
+- Master volume.
+- Music volume.
+- Effects volume.
+- Unit voice volume.
+- Mute.
+
+Controls
+
+- Keyboard shortcuts.
+- Mouse sensitivity.
+- Touch sensitivity.
+- Camera movement speed.
+- Control customization where supported.
+
+Settings must persist and apply to actual game behavior.
+
+---
+
+19. DEVELOPMENT IMPLEMENTATION STRATEGY
+
+Do not attempt to replace the entire project in one destructive update.
+
+Phase 1 — Existing Game Audit
+
+Inspect:
+
+- Current game engine.
+- Component structure.
+- Rendering pipeline.
+- Unit systems.
+- Building systems.
+- Economy.
+- AI.
+- UI.
+- Input handlers.
+- Save/load.
+
+Identify working features and broken features.
+
+Create a preservation plan.
+
+Phase 2 — Critical UI/UX & Full-Screen Upgrade
+
+Implement:
+
+- Responsive viewport.
+- Full-screen control.
+- Mobile landscape layout.
+- Improved HUD.
+- Better construction menus.
+- Improved selection indicators.
+- Larger readable controls.
+- Improved camera behavior.
+
+Verify existing gameplay still works.
+
+Phase 3 — Map & Graphics Upgrade
+
+Implement:
+
+- Improved terrain.
+- Better unit visuals.
+- Better building visuals.
+- Environmental objects.
+- Enhanced animations.
+- Improved combat effects.
+
+Preserve collision and navigation behavior.
+
+Phase 4 — Advanced Unit Control
+
+Implement:
+
+- Multi-selection.
+- Squad formations.
+- Control groups.
+- Tactical commands.
+- Independent squad movement.
+- Mobile selection controls.
+
+Phase 5 — Expanded Military Content
+
+Implement:
+
+- New infantry.
+- New tanks.
+- New buildings.
+- Additional defenses.
+- Research progression.
+
+Add new content incrementally and verify each category.
+
+Phase 6 — Advanced AI & Air Units
+
+Implement:
+
+- Smarter enemy decisions.
+- Coordinated attacks.
+- Aircraft movement.
+- Air combat.
+- Anti-air defenses.
+
+Phase 7 — Additional Modes & Polish
+
+Implement:
+
+- Expanded maps.
+- Campaign.
+- Sandbox.
+- Custom battles.
+- Improved save/load.
+- Audio improvements.
+- Performance optimization.
+
+Complete and test each phase before advancing.
+
+---
+
+20. STRICT QUALITY ASSURANCE
+
+For every new feature:
+
+1. Implement real gameplay logic.
+2. Connect it to the interface.
+3. Test user interaction.
+4. Test state changes.
+5. Test visual feedback.
+6. Test AI interaction.
+7. Test mobile input.
+8. Test performance.
+9. Fix failures.
+10. Preserve previous functionality.
+
+Mandatory verification scenarios
+
+- Select a single soldier and move it.
+- Select five soldiers and command a formation.
+- Create two squads and issue independent orders.
+- Build a resource generator and earn credits.
+- Build barracks and recruit infantry.
+- Build a vehicle factory and produce a tank.
+- Repair a damaged building.
+- Upgrade a military unit.
+- Attack and destroy an enemy tank.
+- Destroy an enemy defensive tower.
+- Defend against an enemy assault.
+- Use the minimap to navigate.
+- Enter and exit full-screen mode.
+- Save and reload an active match.
+- Win by destroying the enemy headquarters.
+- Lose when the player's headquarters is destroyed.
+
+Do not mark a feature complete unless it passes its applicable tests.
+
+---
+
+21. FINAL EXECUTION DIRECTIVE
+
+You are responsible for upgrading the existing Iron Dominion project into a genuinely playable, visually polished, advanced military RTS.
+
+Do not merely explain how the game should be improved. Make the actual code changes.
+
+Do not create screenshots or simulated interfaces as substitutes for implementation.
+
+Do not remove working features to simplify the upgrade.
+
+Do not introduce nonfunctional units or buildings just to make the menus look more impressive.
+
+Prioritize in this order:
+
+1. Real gameplay functionality.
+2. Full-screen responsive battlefield.
+3. Professional UI/UX.
+4. Better battlefield graphics.
+5. Advanced unit selection and squad control.
+6. Expanded infantry and vehicles.
+7. More military buildings and defenses.
+8. Intelligent enemy AI.
+9. Aircraft and advanced warfare.
+10. Additional game modes and optimization.
+
+If the complete upgrade cannot fit in one generation, implement the next complete, testable phase and preserve a clear continuation plan.
+
+FINAL TARGET:
+
+Iron Dominion must feel like a real, professional military strategy game where players can build powerful bases, generate resources, command individual soldiers or entire armies, manufacture tanks, deploy advanced military units, defend their territory, and conquer enemy headquarters on a visually impressive, fully interactive battlefield.
+
+START BY AUDITING THE EXISTING PROJECT, THEN IMPLEMENT PHASE 2: FULL-SCREEN GAMEPLAY, RESPONSIVE UI/UX, IMPROVED TROOP SELECTION, AND BATTLEFIELD PRESENTATION.
+
+DO NOT STOP AT A DESIGN PLAN. IMPLEMENT AND TEST THE CODE.
