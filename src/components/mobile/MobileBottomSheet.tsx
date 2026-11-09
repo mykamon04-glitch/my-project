@@ -323,6 +323,59 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
   const [activeTab, setActiveTab] = useState<MobileTab>('build');
   const [sheetSnap, setSheetSnap] = useState<SheetSnapState>('collapsed');
 
+  // --- Draggable sheet (Rule 6): live height while dragging, snap to collapsed / half / expanded ---
+  const [vh, setVh] = useState<number>(typeof window !== 'undefined' ? window.innerHeight : 800);
+  const [dragH, setDragH] = useState<number | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ y0: number; h0: number; t0: number; moved: boolean } | null>(null);
+  React.useEffect(() => {
+    const onResize = () => setVh(window.innerHeight);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, []);
+  // The expanded sheet must stop below the top HUD and above the nav bar.
+  const hudBottom = typeof document !== 'undefined' ? document.querySelector('header')?.getBoundingClientRect().bottom ?? 110 : 110;
+  const NAV_H = 76;
+  const fullPx = Math.max(160, Math.round(vh - hudBottom - NAV_H - 8));
+  const halfPx = Math.min(fullPx, Math.max(170, Math.round(vh * 0.44)));
+
+  const onHandleDown = (e: React.PointerEvent) => {
+    const h0 = sheetRef.current?.getBoundingClientRect().height ?? halfPx;
+    dragRef.current = { y0: e.clientY, h0, t0: performance.now(), moved: false };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onHandleMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const dy = d.y0 - e.clientY;
+    if (Math.abs(dy) > 4) d.moved = true;
+    if (d.moved) setDragH(Math.max(60, Math.min(fullPx, d.h0 + dy)));
+  };
+  const onHandleUp = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    if (!d) return;
+    if (!d.moved) {
+      // simple tap on the grabber: toggle between half and expanded
+      setSheetSnap(prev => (prev === 'expanded' ? 'half' : 'expanded'));
+      setDragH(null);
+      return;
+    }
+    const dy = d.y0 - e.clientY;
+    const velocity = dy / Math.max(1, performance.now() - d.t0); // px/ms, + = up
+    const h = Math.max(0, Math.min(fullPx, d.h0 + dy)) + velocity * 120; // flick bias
+    let next: SheetSnapState;
+    if (h < 110) next = 'collapsed';
+    else next = Math.abs(h - halfPx) <= Math.abs(h - fullPx) ? 'half' : 'expanded';
+    setSheetSnap(next);
+    setDragH(null);
+  };
+
+
   // Subcategory filters
   const [buildCategory, setBuildCategory] = useState<BuildCategory>('economy');
   const [armySection, setArmySection] = useState<ArmySection>('units');
@@ -592,7 +645,31 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
 
       {/* 2. SLIDE-UP DRAWER FOR BUILD / ARMY / DEFENSE / AI */}
       {sheetSnap !== 'collapsed' && (
-        <div className="mx-auto w-[min(calc(100vw-8px),640px)] mb-1 bg-[#101820]/95 backdrop-blur-md border border-[#1B2730] rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-200 flex flex-col max-h-[50vh]">
+        <div
+          ref={sheetRef}
+          data-testid="bottom-sheet"
+          data-snap={sheetSnap}
+          style={
+            dragH != null
+              ? { height: dragH }
+              : sheetSnap === 'expanded'
+              ? { height: fullPx, transition: 'height 220ms cubic-bezier(.2,.8,.2,1)' }
+              : { maxHeight: halfPx, transition: 'max-height 220ms cubic-bezier(.2,.8,.2,1)' }
+          }
+          className="mx-auto w-[min(calc(100vw-8px),640px)] mb-1 bg-[#131F2D]/95 backdrop-blur-md border border-[#2a3b4f] rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-200 flex flex-col"
+        >
+          {/* Drag handle: drag to resize, release to snap; tap toggles half/expanded */}
+          <div
+            role="separator"
+            aria-label="Drag to resize panel"
+            onPointerDown={onHandleDown}
+            onPointerMove={onHandleMove}
+            onPointerUp={onHandleUp}
+            onPointerCancel={onHandleUp}
+            className="h-6 shrink-0 flex items-center justify-center cursor-grab touch-none bg-[#16212c]"
+          >
+            <span className="w-10 h-1.5 rounded-full bg-[#3a4d63]" />
+          </div>
           {/* Drawer Top Header Bar */}
           <div className="flex items-center justify-between px-3 py-2 border-b border-[#1B2730] bg-[#16212c]">
             <div className="flex items-center gap-2">
@@ -669,7 +746,7 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
                             {renderBuildingThumbnail(type)}
                           </div>
                           <div className="min-w-0">
-                            <span className="font-display font-bold text-xs text-[#F1F5F7] block truncate">
+                            <span className="font-display font-bold text-xs text-[#F1F5F7] block leading-tight break-words">
                               {cfg.name}
                             </span>
                             <div className="flex items-center gap-2 text-[10px] mt-0.5">
@@ -949,7 +1026,7 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
                         <div className="flex items-center gap-2 min-w-0">
                           {renderBuildingThumbnail(type)}
                           <div className="min-w-0">
-                            <span className="font-display font-bold text-xs text-[#F1F5F7] block truncate">
+                            <span className="font-display font-bold text-xs text-[#F1F5F7] block leading-tight break-words">
                               {cfg.name}
                             </span>
                             <div className="flex items-center gap-1.5 text-[10px] mt-0.5">
