@@ -24,6 +24,7 @@ import {
   WeatherType,
   Wreckage,
 } from '../types/game';
+import { GROUND_CHUNK_TILES, buildGroundChunk } from './groundTexture';
 
 export interface Camera {
   x: number;
@@ -211,6 +212,58 @@ export class TacticalRenderer {
     const minY = Math.floor((camera.y - halfH) / ts) - 1;
     const maxY = Math.ceil((camera.y + halfH) / ts) + 1;
 
+    // Temperate ground: a smooth colour field instead of a flat colour per tile (removes the stair-stepped squares).
+    // It is rendered once into 12-tile chunks and blitted 1:1 (cheap per frame). Chunks build at most a few per frame;
+    // tiles whose chunk is not ready yet, other biomes and eye-comfort mode keep the original per-tile fill below.
+    const temperate = biome !== 'snow' && biome !== 'desert' && biome !== 'urban' && biome !== 'volcanic' && biome !== 'industrial';
+    let groundReady: ((px: number, py: number) => boolean) | null = null;
+    // Smooth ground is a High/Ultra feature: it costs measurable frame time on CPU-rendered canvases, so the
+    // Balanced and Performance presets keep the original flat per-tile fill (no added cost).
+    const q = settings?.graphicsQuality ?? 'ultra';
+    if (temperate && !settings?.eyeComfortMode && (q === 'high' || q === 'ultra')) {
+      const CH = GROUND_CHUNK_TILES * ts;
+      const cx0 = Math.floor((minX * ts) / CH), cx1 = Math.floor(((maxX + 1) * ts - 1) / CH);
+      const cy0 = Math.floor((minY * ts) / CH), cy1 = Math.floor(((maxY + 1) * ts - 1) / CH);
+      const keyOf = (cx: number, cy: number) => ((cx + 4096) << 13) | (cy + 4096);
+      const visX0 = minX * ts, visY0 = minY * ts, visX1 = (maxX + 1) * ts, visY1 = (maxY + 1) * ts;
+      const ready = new Set<number>();
+      let budget = 6;
+      for (let cy = cy0; cy <= cy1; cy++) {
+        for (let cx = cx0; cx <= cx1; cx++) {
+          const key = keyOf(cx, cy);
+          let chunk = this.groundChunks.get(key);
+          if (chunk) {
+            this.groundChunks.delete(key); // refresh LRU position
+            this.groundChunks.set(key, chunk);
+          } else if (budget > 0) {
+            chunk = buildGroundChunk(cx * CH, cy * CH, CH, 1337) ?? undefined;
+            if (chunk) {
+              this.groundChunks.set(key, chunk);
+              budget--;
+            }
+          }
+          if (chunk) {
+            // Blit only the part of the chunk that is on screen (the viewport, not the whole 480px bitmap).
+            const wx0 = cx * CH, wy0 = cy * CH;
+            const ix0 = Math.max(wx0, visX0), iy0 = Math.max(wy0, visY0);
+            const ix1 = Math.min(wx0 + CH, visX1), iy1 = Math.min(wy0 + CH, visY1);
+            if (ix1 > ix0 && iy1 > iy0) {
+              // +1px on the far edges overlaps the neighbouring blit and hides sub-pixel seams at fractional zoom
+              ctx.drawImage(chunk, ix0 - wx0, iy0 - wy0, ix1 - ix0, iy1 - iy0, ix0, iy0, ix1 - ix0 + 1, iy1 - iy0 + 1);
+            }
+            ready.add(key);
+          }
+        }
+      }
+      // keep the cache bounded (about 1MB per chunk) but never smaller than what is on screen
+      const cap = Math.max(32, (cx1 - cx0 + 1) * (cy1 - cy0 + 1) + 8);
+      while (this.groundChunks.size > cap) {
+        const oldest = this.groundChunks.keys().next().value as number;
+        this.groundChunks.delete(oldest);
+      }
+      groundReady = (px: number, py: number) => ready.has(keyOf(Math.floor(px / CH), Math.floor(py / CH)));
+    }
+
     for (let y = minY; y <= maxY; y++) {
       for (let x = minX; x <= maxX; x++) {
         const px = x * ts;
@@ -320,21 +373,24 @@ export class TacticalRenderer {
             const light = 16 + Math.round(contour * 2.5);
             baseColor = `hsl(${hue}, ${sat}%, ${light}%)`;
           }
-          ctx.fillStyle = baseColor;
-          ctx.fillRect(px, py, ts + 0.6, ts + 0.6);
+          const coveredByGround = !!groundReady && groundReady(px, py);
+          if (!coveredByGround) {
+            ctx.fillStyle = baseColor;
+            ctx.fillRect(px, py, ts + 0.6, ts + 0.6);
+          }
 
           // Occasional organic soil depressions (natural variation, non-repetitive)
-          if (noise > 0.91) {
+          if (noise > 0.945) {
             const depX = px + offsetX2;
             const depY = py + offsetY2;
             const depR = 5 + noise * 4;
-            ctx.fillStyle = 'rgba(15, 25, 18, 0.35)';
+            ctx.fillStyle = 'rgba(15, 25, 18, 0.28)';
             ctx.beginPath();
-            ctx.ellipse(depX + 1, depY + 1.2, depR + 1, (depR + 1) * 0.6, 0, 0, Math.PI * 2);
+            ctx.ellipse(depX + 1, depY + 1.2, depR + 1, (depR + 1) * (0.45 + noise * 0.3), noise * 3, 0, Math.PI * 2);
             ctx.fill();
-            ctx.fillStyle = eyeComfort ? '#221c17' : '#261e14';
+            ctx.fillStyle = eyeComfort ? '#221c17' : 'rgba(34, 30, 20, 0.7)';
             ctx.beginPath();
-            ctx.ellipse(depX, depY, depR, depR * 0.6, 0, 0, Math.PI * 2);
+            ctx.ellipse(depX, depY, depR, depR * (0.45 + noise * 0.3), noise * 3, 0, Math.PI * 2);
             ctx.fill();
           }
 
@@ -980,6 +1036,115 @@ export class TacticalRenderer {
     }
   }
 
+  private shadowCache = new Map<string, HTMLCanvasElement>();
+
+  /** Soft building shadow (penumbra + core, south-east), origin = building top-left. Cached per size. */
+  private getBuildingShadow(w: number, h: number, elev: number): HTMLCanvasElement {
+    const key = `${w}|${h}|${elev}`;
+    const hit = this.shadowCache.get(key);
+    if (hit) return hit;
+    const cv = document.createElement('canvas');
+    cv.width = Math.ceil(w + elev * 0.3 + 12);
+    cv.height = Math.ceil(h + elev * 0.25 + 15);
+    const c = cv.getContext('2d');
+    if (c) {
+      const sx = 4, sy = 6, sw = w + elev * 0.3, sh = h + elev * 0.25;
+      c.fillStyle = 'rgba(0, 0, 0, 0.14)';
+      c.beginPath();
+      c.roundRect(sx - 3, sy - 2, sw + 8, sh + 8, 10);
+      c.fill();
+      c.fillStyle = 'rgba(0, 0, 0, 0.26)';
+      c.beginPath();
+      c.roundRect(sx, sy, sw + 1, sh + 1, 6);
+      c.fill();
+    }
+    this.shadowCache.set(key, cv);
+    return cv;
+  }
+
+  private matCache = new Map<string, HTMLCanvasElement>();
+
+  /**
+   * Static building material layer, origin = roof top-left, size w x (h + elev). Everything here is independent of
+   * position, faction colour and game state (those are drawn live around it), so it is cached per
+   * (width, height, elevation, weathering variant). Rendered at 2x so it stays crisp on high-DPI screens.
+   */
+  private getBuildingMaterial(w: number, h: number, elev: number, variant: number): HTMLCanvasElement {
+    const key = `${w}|${h}|${elev}|${variant}`;
+    const hit = this.matCache.get(key);
+    if (hit) return hit;
+    const S = 2;
+    const cv = document.createElement('canvas');
+    cv.width = Math.ceil(w * S);
+    cv.height = Math.ceil((h + elev) * S);
+    const c = cv.getContext('2d');
+    if (!c) return cv;
+    c.scale(S, S);
+
+    if (elev > 0) {
+      // wall: light falls off toward the ground, with a thin contact shadow at the base
+      const wallGrad = c.createLinearGradient(0, h, 0, h + elev);
+      wallGrad.addColorStop(0, 'rgba(255, 255, 255, 0.06)');
+      wallGrad.addColorStop(1, 'rgba(0, 0, 0, 0.30)');
+      c.fillStyle = wallGrad;
+      c.fillRect(2, h, w - 4, elev);
+      c.fillStyle = 'rgba(0, 0, 0, 0.32)';
+      c.fillRect(2, h + elev - 2.5, w - 4, 2.5);
+    }
+
+    // roof: directional light (north-west lit, south-east in shade)
+    const roofGrad = c.createLinearGradient(0, 0, w, h);
+    roofGrad.addColorStop(0, 'rgba(255, 255, 255, 0.08)');
+    roofGrad.addColorStop(1, 'rgba(0, 0, 0, 0.20)');
+    c.fillStyle = roofGrad;
+    c.beginPath();
+    c.roundRect(2, 2, w - 4, h - 4, 3);
+    c.fill();
+
+    // bevel: bright top/left edge, dark bottom/right edge
+    c.lineWidth = 1;
+    c.strokeStyle = 'rgba(255, 255, 255, 0.20)';
+    c.beginPath();
+    c.moveTo(4, h - 3);
+    c.lineTo(4, 3);
+    c.lineTo(w - 4, 3);
+    c.stroke();
+    c.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+    c.beginPath();
+    c.moveTo(w - 3, 4);
+    c.lineTo(w - 3, h - 3);
+    c.lineTo(4, h - 3);
+    c.stroke();
+
+    if (w >= 80) {
+      c.strokeStyle = 'rgba(0, 0, 0, 0.18)';
+      c.beginPath();
+      c.moveTo(w / 2, 4);
+      c.lineTo(w / 2, h - 4);
+      c.stroke();
+    }
+
+    c.fillStyle = 'rgba(255, 255, 255, 0.22)';
+    for (const [rx, ry] of [[7, 7], [w - 7, 7], [7, h - 7], [w - 7, h - 7]]) {
+      c.beginPath();
+      c.arc(rx, ry, 1.2, 0, Math.PI * 2);
+      c.fill();
+    }
+
+    // weathering stains: four variants so neighbouring buildings differ
+    const seed = (variant + 0.5) / 4;
+    c.fillStyle = 'rgba(0, 0, 0, 0.07)';
+    c.beginPath();
+    c.ellipse(w * (0.25 + seed * 0.5), h * (0.3 + ((seed * 7) % 1) * 0.4), w * 0.16, h * 0.1, seed * 3, 0, Math.PI * 2);
+    c.fill();
+    c.beginPath();
+    c.ellipse(w * (0.65 - seed * 0.3), h * (0.7 - ((seed * 5) % 1) * 0.3), w * 0.1, h * 0.07, seed * 5, 0, Math.PI * 2);
+    c.fill();
+
+    this.matCache.set(key, cv);
+    return cv;
+  }
+
   private renderBuildings(buildings: Building[], settings?: Partial<GameSettings>) {
     const ctx = this.ctx;
     const sorted = [...buildings].sort((a, b) => a.pixelY - b.pixelY);
@@ -1011,12 +1176,11 @@ export class TacticalRenderer {
 
       ctx.save();
 
-      // 1. Directional Soft Ground Shadow (cast toward south-east)
+      const fancy = settings?.graphicsQuality !== 'low'; // material pass is skipped on the Performance preset
+
+      // 1. Directional ground shadow (south-east): a soft penumbra plus a tighter core, smaller than before
       if (this.shadowLvl !== 'off') {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-        ctx.beginPath();
-        ctx.roundRect(x + 6, y + 8, w + elev * 0.45, h + elev * 0.35, 6);
-        ctx.fill();
+        ctx.drawImage(this.getBuildingShadow(w, h, elev), x, y);
       }
 
       // 2. Integrated Architectural Foundation Footing (flush beneath walls, no artificial platform)
@@ -1034,6 +1198,7 @@ export class TacticalRenderer {
         ctx.strokeStyle = '#090e14';
         ctx.lineWidth = 1.5;
         ctx.strokeRect(x + 2, y + h - elev, w - 4, elev);
+
 
         // Vertical armored reinforcement ribs on the front face
         const ribStep = Math.max(16, Math.floor(w / 4));
@@ -1065,6 +1230,14 @@ export class TacticalRenderer {
       ctx.moveTo(x + 4, roofY + h / 2);
       ctx.lineTo(x + w - 4, roofY + h / 2);
       ctx.stroke();
+
+      if (fancy) {
+        // Static material layer (wall/roof shading, bevel, seams, rivets, weathering, contact shadow): rendered once per
+        // size into a cached sprite and drawn with a single drawImage instead of ~25 canvas operations per building.
+        const seed = Math.abs(Math.sin(b.x * 12.9898 + b.y * 78.233) * 43758.5453) % 1;
+        const sprite = this.getBuildingMaterial(w, h, elev, Math.floor(seed * 4));
+        ctx.drawImage(sprite, x, roofY, w, h + elev);
+      }
 
       // 5. Building-Specific Architecture (Elevated on the Roof Deck)
       this.renderBuildingDetails(b, x, roofY, w, h, isPlayer, accentColor);
@@ -2962,6 +3135,7 @@ export class TacticalRenderer {
   // Fog is rendered as a 1-pixel-per-tile alpha mask that is scaled up with bilinear smoothing.
   // Same tile states/opacities as before (0 = unexplored, 1 = explored, 2 = visible) but soft edges instead of
   // hard per-tile rectangles, and one drawImage instead of thousands of fillRect calls.
+  private groundChunks = new Map<number, HTMLCanvasElement>(); // LRU: oldest first
   private fogCanvas: HTMLCanvasElement | null = null;
   private fogImage: ImageData | null = null;
 

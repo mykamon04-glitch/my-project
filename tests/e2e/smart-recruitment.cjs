@@ -34,9 +34,18 @@ const res = []; const ok = (n, p, i = '') => { res.push(p); console.log((p ? 'PA
     await p.getByRole('button', { name: 'Army size target plus' }).click(); await p.waitForTimeout(200);
     ok(`${w}x${h} army target stepper changes value`, (await target.innerText()) !== t0, `${t0} -> ${await target.innerText()}`);
 
-    // Custom shows composition steppers
+    // Custom: compact numeric inputs, live total, explicit Normalize action
     await radio('Custom').click(); await p.waitForTimeout(250);
-    ok(`${w}x${h} Custom shows composition controls`, await p.getByRole('button', { name: 'Armor % plus' }).isVisible());
+    const armor = p.getByLabel('Armor %', { exact: true });
+    ok(`${w}x${h} Custom shows numeric composition inputs`, await armor.isVisible());
+    const totalText = () => p.getByTestId('composition-total').innerText();
+    await armor.fill('90'); await p.waitForTimeout(250);
+    const over = await totalText();
+    ok(`${w}x${h} total flags a non-100 mix`, /Total (1\d\d)%/.test(over) && /over/.test(over), over);
+    await p.getByRole('button', { name: 'Normalize to 100%' }).click(); await p.waitForTimeout(250);
+    ok(`${w}x${h} Normalize makes the total exactly 100%`, /Total 100%/.test(await totalText()) && (await p.getByRole('button', { name: 'Normalize to 100%' }).count()) === 0, await totalText());
+    await armor.fill('-5'); await p.waitForTimeout(200);
+    ok(`${w}x${h} invalid input is clamped to 0`, (await armor.inputValue()) === '0');
 
     // no horizontal overflow, controls inside viewport
     const dims = await p.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth }));

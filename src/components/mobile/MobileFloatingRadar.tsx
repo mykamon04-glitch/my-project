@@ -352,7 +352,7 @@ export const MobileFloatingRadar: React.FC<MobileFloatingRadarProps> = ({
         className="fixed top-[var(--hud-top)] right-2 z-25 pointer-events-auto select-none bg-[#0d141d]/95 backdrop-blur-md border border-[#1C2933] rounded-xl shadow-2xl p-1 flex flex-col gap-1 font-mono text-[9px] text-[#F4F7FA]"
         style={{ width: `${miniW + 8}px` }}
       >
-        {/* Header Strip with Expand & HQ Center */}
+        {/* Header Strip with Expand (HQ centering lives in the top camera row, so it is not duplicated here) */}
         <div className="flex items-center justify-between px-0.5">
           <div className="flex items-center gap-1 text-[#38B98A] font-bold">
             <Radio className="w-2.5 h-2.5 text-[#38B98A]" />
@@ -361,18 +361,12 @@ export const MobileFloatingRadar: React.FC<MobileFloatingRadarProps> = ({
 
           <div className="flex items-center gap-0.5">
             <button
-              onClick={onCenterHQ}
-              title="Center on Headquarters"
-              className="p-0.5 rounded bg-[#16212c] hover:bg-[#1C2933] text-[#38B98A] active:scale-95"
-            >
-              <Crosshair className="w-3 h-3" />
-            </button>
-            <button
               onClick={() => setIsFullRadarOpen(true)}
               title="Open Full Tactical Radar"
-              className="p-0.5 rounded bg-[#16212c] hover:bg-[#1C2933] text-[#36C9E8] active:scale-95"
+              aria-label="Open full tactical radar"
+              className="w-7 h-7 -my-1 -mr-1 rounded-md flex items-center justify-center text-[#42B9E8] hover:bg-[#1D2C3C] active:scale-95"
             >
-              <Maximize2 className="w-3 h-3" />
+              <Maximize2 className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>

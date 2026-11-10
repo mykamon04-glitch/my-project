@@ -1774,32 +1774,21 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* FLOATING CAMERA QUICK-CLUSTER (HQ, FIT BASE, FOCUS) */}
-                  <div className="mt-2 flex items-center gap-1.5">
-                    <button
-                      onClick={handleCenterHQ}
-                      className="w-8 h-8 rounded-xl bg-[#101820]/90 hover:bg-[#1B2730] border border-[#1B2730] text-[#2FB68A] flex items-center justify-center shadow-md active:scale-95 transition-transform"
-                      title="Center on Headquarters"
-                    >
-                      <Crosshair className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={handleFitBase}
-                      className="w-8 h-8 rounded-xl bg-[#101820]/90 hover:bg-[#1B2730] border border-[#1B2730] text-[#4B91B5] flex items-center justify-center shadow-md active:scale-95 transition-transform"
-                      title="Fit Base to Screen"
-                    >
-                      <Layers className="w-4 h-4" />
-                    </button>
-                    {selectedUnitIds.length > 0 && (
+                  {/* Camera: HQ / Fit / Follow / Zoom / Radar live once in the top camera row. This button has no
+                      equivalent there (it jumps to the current selection), so it stays, but only when it can act. */}
+                  {selectedUnitIds.length > 0 && (
+                    <div className="mt-2 flex items-center gap-1.5">
                       <button
                         onClick={handleFocusSelected}
-                        className="w-8 h-8 rounded-xl bg-[#101820]/90 hover:bg-[#1B2730] border border-[#1B2730] text-[#E5A93D] flex items-center justify-center shadow-md active:scale-95 transition-transform"
+                        className="h-8 px-2.5 rounded-xl bg-[#131F2D]/90 border border-[#2a3b4f] text-[#E7B45B] flex items-center gap-1.5 text-[11px] font-semibold shadow-md active:scale-95 transition-transform"
                         title="Focus on Selected Units"
+                        aria-label="Focus on selected units"
                       >
-                        <Navigation className="w-4 h-4" />
+                        <Navigation className="w-3.5 h-3.5" />
+                        <span>Selection</span>
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               )}
 

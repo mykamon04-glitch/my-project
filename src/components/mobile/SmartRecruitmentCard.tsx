@@ -5,7 +5,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { GameEngine } from '../../game/engine';
-import { SMART_MODES, SmartMode, applySmartMode, detectSmartMode } from '../../game/smartRecruitment';
+import { SMART_MODES, SmartMode, applySmartMode, clampShare, compositionTotal, detectSmartMode, normalizeComposition } from '../../game/smartRecruitment';
 import { AICommanderCustomComposition } from '../../types/game';
 import { formatCompact } from '../../utils/format';
 
@@ -24,6 +24,29 @@ const Stepper: React.FC<{ label: string; value: string; onMinus: () => void; onP
       <button aria-label={`${label} minus`} disabled={!canMinus} onClick={onMinus} className="w-8 h-8 rounded-lg bg-[#131F2D] border border-[#2a3b4f] text-[#F1F5F9] font-bold disabled:opacity-35 active:scale-95">−</button>
       <span className="w-14 text-center text-xs font-bold tabular-nums text-[#F1F5F9]">{value}</span>
       <button aria-label={`${label} plus`} disabled={!canPlus} onClick={onPlus} className="w-8 h-8 rounded-lg bg-[#131F2D] border border-[#2a3b4f] text-[#F1F5F9] font-bold disabled:opacity-35 active:scale-95">+</button>
+    </span>
+  </div>
+);
+
+/** Compact share input: a small numeric field with discreet -/+ nudges (5 points). Values are clamped 0-100. */
+const ShareRow: React.FC<{ label: string; value: number; onChange: (v: number) => void }> = ({ label, value, onChange }) => (
+  <div className="flex items-center justify-between gap-2 min-h-[30px]">
+    <label htmlFor={`share-${label}`} className="text-[11px] text-[#A7B7C7] min-w-0 truncate">{label}</label>
+    <span className="flex items-center gap-1 shrink-0">
+      <button aria-label={`${label} minus 5`} disabled={value <= 0} onClick={() => onChange(clampShare(value - 5))} className="w-7 h-7 rounded-md bg-[#131F2D] border border-[#2a3b4f] text-[#F1F5F9] text-sm leading-none disabled:opacity-35 active:scale-95">−</button>
+      <input
+        id={`share-${label}`}
+        aria-label={label}
+        type="number"
+        inputMode="numeric"
+        min={0}
+        max={100}
+        step={1}
+        value={value}
+        onChange={e => onChange(clampShare(parseFloat(e.target.value)))}
+        className="w-12 h-7 rounded-md bg-[#0B121C] border border-[#2a3b4f] text-center text-xs font-bold tabular-nums text-[#F1F5F9] focus:outline-none focus:border-[#42B9E8]"
+      />
+      <button aria-label={`${label} plus 5`} disabled={value >= 100} onClick={() => onChange(clampShare(value + 5))} className="w-7 h-7 rounded-md bg-[#131F2D] border border-[#2a3b4f] text-[#F1F5F9] text-sm leading-none disabled:opacity-35 active:scale-95">+</button>
     </span>
   </div>
 );
@@ -90,19 +113,32 @@ export const SmartRecruitmentCard: React.FC<{ engine: GameEngine; onHaptic?: () 
       </p>
 
       {picked === 'custom' && comp && (
-        <div className="rounded-lg bg-[#131F2D]/70 p-2 space-y-0.5">
+        <div className="rounded-lg bg-[#131F2D]/70 p-2 space-y-0.5" data-testid="composition">
           {COMP_FIELDS.map(f => (
-            <Stepper
+            <ShareRow
               key={f.key}
               label={f.label}
-              value={`${comp[f.key]}`}
-              canMinus={comp[f.key] > 0}
-              canPlus={comp[f.key] < 100}
-              onMinus={() => { ap.customComposition = { ...comp, [f.key]: Math.max(0, comp[f.key] - 5) }; bump(); }}
-              onPlus={() => { ap.customComposition = { ...comp, [f.key]: Math.min(100, comp[f.key] + 5) }; bump(); }}
+              value={comp[f.key]}
+              onChange={v => { ap.customComposition = { ...comp, [f.key]: v }; bump(); }}
             />
           ))}
-          <div className="text-[10px] text-[#A7B7C7] text-right">Total {compTotal}% (used as relative weights)</div>
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <span
+              data-testid="composition-total"
+              className={`text-[11px] font-bold tabular-nums ${compTotal === 100 ? 'text-[#25C99A]' : 'text-[#E7B45B]'}`}
+            >
+              Total {compTotal}%{compTotal === 100 ? '' : compTotal < 100 ? ` · ${100 - compTotal}% unallocated` : ` · ${compTotal - 100}% over`}
+            </span>
+            {compTotal !== 100 && (
+              <button
+                onClick={() => { onHaptic?.(); ap.customComposition = normalizeComposition(comp); bump(); }}
+                className="h-7 px-2 rounded-md bg-[#25C99A]/15 border border-[#25C99A]/50 text-[#25C99A] text-[11px] font-bold active:scale-95"
+              >
+                Normalize to 100%
+              </button>
+            )}
+          </div>
+          <p className="text-[10px] text-[#A7B7C7]">Shares are proportions of one army. The game rescales them automatically, so only the ratios matter; 100% keeps them readable.</p>
         </div>
       )}
 

@@ -63,3 +63,36 @@ export function applySmartMode(ap: AutoProductionSettings, mode: SmartMode): voi
       break;
   }
 }
+
+// ── composition validation ──────────────────────────────────────────────────
+
+const COMP_KEYS = ['infantryPct', 'armorPct', 'antiAirPct', 'artilleryPct', 'supportPct'] as const;
+export const DEFAULT_COMPOSITION: AICommanderCustomComposition = { infantryPct: 30, armorPct: 35, antiAirPct: 15, artilleryPct: 10, supportPct: 10 };
+
+export const compositionTotal = (c: AICommanderCustomComposition): number => COMP_KEYS.reduce((n, k) => n + (Number.isFinite(c[k]) ? c[k] : 0), 0);
+
+/** Clamp a typed value to a whole number from 0 to 100 (NaN and negatives become 0). */
+export const clampShare = (v: number): number => (Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : 0);
+
+/**
+ * Rescale shares so they total exactly 100 while keeping their ratios (largest-remainder rounding).
+ * The engine already treats the five numbers as proportions of one army, so this changes nothing about what
+ * gets built; it only makes the numbers read as true percentages. An all-zero input returns the default mix.
+ */
+export function normalizeComposition(c: AICommanderCustomComposition): AICommanderCustomComposition {
+  const raw = COMP_KEYS.map(k => Math.max(0, Number.isFinite(c[k]) ? c[k] : 0));
+  const total = raw.reduce((a, b) => a + b, 0);
+  if (total <= 0) return { ...DEFAULT_COMPOSITION };
+  const exact = raw.map(v => (v / total) * 100);
+  const floors = exact.map(Math.floor);
+  let left = 100 - floors.reduce((a, b) => a + b, 0);
+  const order = exact.map((v, i) => ({ i, frac: v - Math.floor(v) })).sort((a, b) => b.frac - a.frac);
+  for (const o of order) {
+    if (left <= 0) break;
+    floors[o.i] += 1;
+    left -= 1;
+  }
+  const out = { ...DEFAULT_COMPOSITION };
+  COMP_KEYS.forEach((k, i) => { out[k] = floors[i]; });
+  return out;
+}
