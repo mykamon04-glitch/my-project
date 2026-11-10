@@ -504,6 +504,17 @@ export type AIArchitectMode =
   | 'economy'
   | 'custom';
 
+/** Construction AI strategy (V8.1). */
+export type ConstructionStrategyId = 'balanced' | 'defense_only' | 'army_production' | 'economy' | 'adaptive';
+
+/** One bounded, event-based entry of the Construction AI decision log. */
+export interface ConstructionLogEntry {
+  t: number; // game time
+  kind: 'build' | 'skip' | 'delay' | 'idle' | 'approval' | 'info' | 'done';
+  type?: BuildingType;
+  text: string;
+}
+
 /** Lifecycle of one AI construction project (one "slot" on the Construction AI dashboard). */
 export type ConstructionTaskStatus = 'planned' | 'waiting_resources' | 'constructing' | 'completed' | 'failed' | 'cancelled';
 
@@ -520,7 +531,10 @@ export interface ConstructionTask {
   rotation: number;
   status: ConstructionTaskStatus;
   reason: string;
-  approved: boolean; // SUGGEST mode: false until the player approves
+  approved: boolean; // SUGGEST mode (or a strategy-violating prerequisite): false until the player approves
+  requiresApproval?: boolean; // approval is mandatory even in AUTO (e.g. a prerequisite that Defense Only would not build)
+  prerequisiteFor?: BuildingType; // this project exists because another wanted building requires it
+  score?: number; // priority score the decision engine gave it
   cost: number; // credits this project will spend (from BUILDING_CONFIGS)
   charged: boolean; // true once the cost has been deducted; guards against double charging
   buildingId?: string; // the real building once construction has started
@@ -559,6 +573,14 @@ export interface AIArchitectSettings {
   lastDecisionReason?: string;
   lastDecisionTime?: number;
   decisionsHistory: AIArchitectDecision[];
+  /** Intelligent Construction AI (V8.1). All optional: older saves get safe defaults. */
+  strategy?: ConstructionStrategyId;
+  avoidDuplicates?: boolean;
+  allowPrerequisites?: boolean;
+  prioritizeDefense?: boolean;
+  typeLimits?: Partial<Record<BuildingType, number>>;
+  decisionLog?: ConstructionLogEntry[];
+  lastPlanned?: Record<string, number>; // building type -> game time it was last planned (cooldowns)
   /** Multi-build Construction AI (V6.2). Persisted with the rest of aiArchitect. */
   lastAutoDoctrine?: AIArchitectMode; // doctrine to return to when switching SUGGEST -> AUTO
   tasks?: ConstructionTask[];

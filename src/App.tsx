@@ -1752,6 +1752,8 @@ export default function App() {
                             <div className="w-3.5 h-3.5 border border-[#A8B6C2]/60 rounded-sm shrink-0 mt-0.5" />
                           )}
                           <span
+                            // Progress is capped at the requirement (2/2); the real count stays available for diagnostics.
+                            title={`${engine.buildings.filter(b => b.type === 'coin_generator' && b.faction === 'player' && b.hp > 0).length} refineries built (objective needs 2)`}
                             className={
                               engine.buildings.filter(b => b.type === 'coin_generator' && b.faction === 'player' && b.hp > 0).length >= 2
                                 ? 'text-[#F1F5F7]'
@@ -1759,7 +1761,7 @@ export default function App() {
                             }
                           >
                             Build Second Refinery (
-                            {engine.buildings.filter(b => b.type === 'coin_generator' && b.faction === 'player' && b.hp > 0).length}/2)
+                            {Math.min(2, engine.buildings.filter(b => b.type === 'coin_generator' && b.faction === 'player' && b.hp > 0).length)}/2)
                           </span>
                         </div>
                         <div className="flex items-start gap-1.5">

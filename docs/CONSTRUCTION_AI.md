@@ -66,3 +66,51 @@ old-save compatibility and "one successful placement per project". Browser: `tes
   as deep as the original logic. Site choice inherits the engine's own placement rules; no new road-preservation logic was added.
 - Reserved credits are honoured by the troop auto-production module; manual recruitment and manual building are never blocked.
 - The browser test used Sandbox mode (unlimited credits). Not tested on a physical Android device.
+
+---
+
+# V8.1 — Intelligent Construction AI (supersedes the "selection" notes above)
+
+## Confirmed defects (reproduced before changing anything)
+- The V6.2 planner walked the original doctrine ladder and, with the limit at 5 and plenty of credits, built whatever the
+  ladder reached first again and again: **26–35 refineries and 7–10 reactors in 3–10 minutes** in a headless run.
+  Duplicates were not counted against demand, and "fill every slot" was effectively a goal.
+- Objective text showed the raw count: "Build Second Refinery (44/2)". It now shows `min(2, count)/2`; the real count is in the
+  tooltip (`cappedProgress` in `src/utils/format.ts`). Objective completion logic is unchanged.
+
+## How decisions are made (`src/game/constructionStrategy.ts`)
+1. **Snapshot** of the real state: counts of finished + under construction + reserved sites + planned tasks, power
+   (now and projected), income, queue pressure, population room, threats (ground/armour/air), turret coverage, mission needs.
+2. **Mandatory gates** per building: your per-type limit, demand (need > 0), demand-based cap, cooldown, strategy focus,
+   prerequisites (`requiredBuilding`), power safety.
+3. **Weighted score** = need × role weight × (1 − 0.7·count/cap), + bonuses (mission objective, prioritise-defense).
+   Below `MIN_SCORE` (25) nothing is built, so slots stay empty on purpose. Recomputed after every decision.
+4. **Layout**: engine-validated candidate sites are re-ranked (spread, defensive side facing the threat, no site overlap with
+   reserved ones). Walls are never built automatically.
+Roles (multi-role allowed, existing building ids only): ECONOMY, POWER, ARMY_PRODUCTION, DEFENSE, TECHNOLOGY, LOGISTICS, SUPPORT.
+
+## Strategies
+Balanced Auto · Defense Only (asks approval for non-defense prerequisites such as a Barracks) · Army Production (power,
+refineries and depots only as support) · Economy & Infrastructure · Adaptive Commander (re-prioritises from live conditions).
+A power-blocked wish requests a reactor instead of deadlocking. Switching strategy cancels not-yet-started proposals only.
+
+## Controls
+AI tab → Construction AI: OFF/SUGGEST/AUTO, strategy, limit 1–5 (a maximum, never a target), pause, toggles (avoid duplicates,
+allow prerequisite support buildings, prioritise base defense, reserve emergency credits), live slots with a one-line real
+reason ("Building Power Generator: …", "Delaying X: Insufficient credits."), per-project cancel/approve, and an expandable
+bounded (40) event-based decision log. Everything persists in the save; older saves get safe defaults.
+
+## Tests
+`tests/construction-ai-v81.test.ts` (30) + `tests/construction.test.ts` (17): roles, all five strategies, power shortage,
+power-blocked reactor, attack → matched turrets, anti-air only with aircraft, duplicate prevention, empty slots, player limits
+(also respected for prerequisites; mission-required buildings are never blocked), prioritise-defense, layout, safety/no negative
+credits/single charge, OFF/SUGGEST, log explanations and bounds, save/load, strategy switch, objective cap.
+Browser: `tests/e2e/construction-ai.cjs` (390×844, 320×640, 844×390). The test fixture stubs the skirmish enemy AI so
+raids do not end the match mid-test.
+
+## Remaining limitations
+- Walls are not built automatically; the legacy doctrine ladder (`chooseArchitectBuilding`, doctrines, custom weights) still
+  exists in the engine but the Construction AI no longer uses it, so the old "Building priorities" UI was removed.
+- The default limit of 5 applies to new games; cancelling a running project refunds 50% (existing demolish rule).
+- Scores are hand-tuned heuristics validated in simulations, not a learned model; not tested on a physical device.
+- Tag `baseline-aistudio-original` could not be pushed to the remote (baseline is reachable by commit d456d60).

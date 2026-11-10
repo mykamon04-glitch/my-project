@@ -4,14 +4,14 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Check, ChevronDown, Hammer, Pause, Play, X } from 'lucide-react';
+import { Check, ChevronDown, Hammer, Pause, Play, ScrollText, X } from 'lucide-react';
 import { BUILDING_CONFIGS } from '../../data/gameData';
 import {
   MAX_SLOTS, activeTasks, approveAllTasks, approveTask, cancelTask, getConstructionMode, getLimit, getReservedCredits,
-  getSlotViews, setConstructionLimit, setConstructionMode,
+  getSlotViews, setConstructionLimit, setConstructionMode, setEmergencyReserve, setOption, setStrategy,
 } from '../../game/constructionAI';
 import { GameEngine } from '../../game/engine';
-import { AIArchitectMode } from '../../types/game';
+import { STRATEGIES } from '../../game/constructionStrategy';
 import { formatCompact } from '../../utils/format';
 
 /**
@@ -26,21 +26,16 @@ const MODES: { id: 'off' | 'suggest' | 'auto'; label: string; hint: string }[] =
   { id: 'auto', label: 'AUTO', hint: 'AI plans and builds on its own' },
 ];
 
-const DOCTRINES: { id: AIArchitectMode; label: string }[] = [
-  { id: 'balanced', label: 'Balanced' },
-  { id: 'economy', label: 'Economy' },
-  { id: 'defensive', label: 'Defense' },
-  { id: 'offensive', label: 'Offense' },
-  { id: 'custom', label: 'Custom' },
+const OPTIONS: { key: 'avoidDuplicates' | 'allowPrerequisites' | 'prioritizeDefense'; label: string; hint: string }[] = [
+  { key: 'avoidDuplicates', label: 'Avoid duplicate buildings', hint: 'Counts finished, building and planned structures; extra copies need real demand' },
+  { key: 'allowPrerequisites', label: 'Allow prerequisite support buildings', hint: 'Lets the AI add power or required buildings on its own; otherwise it asks you' },
+  { key: 'prioritizeDefense', label: 'Prioritize base defense', hint: 'Defenses rank higher, even in strategies that normally skip them' },
 ];
-
-const WEIGHTS: { key: 'powerPriority' | 'economyPriority' | 'defensePriority' | 'militaryPriority' | 'supportPriority'; label: string }[] = [
-  { key: 'powerPriority', label: 'Power' },
-  { key: 'economyPriority', label: 'Economy' },
-  { key: 'defensePriority', label: 'Defense' },
-  { key: 'militaryPriority', label: 'Military' },
-  { key: 'supportPriority', label: 'Support' },
-];
+const DEFAULT_RESERVE = 400;
+const LOG_TONE: Record<string, string> = {
+  build: 'text-[#22C99A]', done: 'text-[#22C99A]', delay: 'text-[#F0B84B]', approval: 'text-[#F0B84B]', skip: 'text-[#A7B7C7]', idle: 'text-[#A7B7C7]', info: 'text-[#39B8F2]',
+};
+const fmtClock = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 
 const fmtEta = (s: number | null) => {
   if (s === null) return '—';
@@ -59,7 +54,7 @@ const STATUS_TONE: Record<string, string> = {
 export const ConstructionAIPanel: React.FC<{ engine: GameEngine; onHaptic?: () => void }> = ({ engine, onHaptic }) => {
   const [, setN] = useState(0);
   const [open, setOpen] = useState(true);
-  const [showPriorities, setShowPriorities] = useState(false);
+  const [showLog, setShowLog] = useState(false);
   useEffect(() => {
     const t = window.setInterval(() => setN(n => n + 1), 400);
     return () => window.clearInterval(t);
@@ -73,15 +68,15 @@ export const ConstructionAIPanel: React.FC<{ engine: GameEngine; onHaptic?: () =
   const slots = getSlotViews(engine);
   const reserved = getReservedCredits(engine);
   const unapproved = active.filter(t => !t.approved).length;
-  const doctrine: AIArchitectMode = a.mode === 'assisted' || a.mode === 'manual' ? a.lastAutoDoctrine ?? 'balanced' : a.mode;
-  const recentProblems = (a.taskHistory ?? []).filter(t => t.status === 'failed' || t.status === 'cancelled').slice(0, 2);
-
-  const pickDoctrine = (d: AIArchitectMode) => {
-    onHaptic?.();
-    if (mode === 'suggest') a.lastAutoDoctrine = d; // stay in SUGGEST; the doctrine applies to the proposals
-    else engine.setAIArchitectMode(d);
-    bump();
+  const strategy = a.strategy ?? 'balanced';
+  const log = [...(a.decisionLog ?? [])].reverse();
+  const slotNote = (t: NonNullable<ReturnType<typeof getSlotViews>[number]['task']>): string => {
+    const nm = BUILDING_CONFIGS[t.type].name;
+    if (!t.approved) return t.requiresApproval ? `Needs your approval: ${t.reason}.` : `Proposed: ${t.reason}.`;
+    if (t.status === 'waiting_resources') return `Delaying ${nm}: Insufficient credits.`;
+    return `${t.status === 'constructing' ? 'Building' : 'Starting'} ${nm}: ${t.reason}.`;
   };
+  const recentProblems = (a.taskHistory ?? []).filter(t => t.status === 'failed' || t.status === 'cancelled').slice(0, 2);
 
   return (
     <div className="rounded-xl border border-[#2a3b4f] bg-[#1B2B3C] overflow-hidden" data-testid="construction-ai">
@@ -125,6 +120,20 @@ export const ConstructionAIPanel: React.FC<{ engine: GameEngine; onHaptic?: () =
             ))}
           </div>
           <p className="text-[10px] text-[#A7B7C7]">{MODES.find(m => m.id === mode)!.hint}</p>
+
+          {/* strategy */}
+          <div>
+            <label htmlFor="construction-strategy" className="text-[11px] text-[#A7B7C7]">Strategy</label>
+            <select
+              id="construction-strategy"
+              value={strategy}
+              onChange={ev => { onHaptic?.(); setStrategy(engine, ev.target.value as typeof strategy); bump(); }}
+              className="mt-1 w-full h-10 rounded-lg bg-[#131F2D] border border-[#2a3b4f] text-xs font-semibold text-[#F1F5F9] px-2"
+            >
+              {STRATEGIES.map(x => <option key={x.id} value={x.id}>{x.label}</option>)}
+            </select>
+            <p className="mt-1 text-[10px] text-[#A7B7C7]" data-testid="strategy-blurb">{STRATEGIES.find(x => x.id === strategy)!.blurb}</p>
+          </div>
 
           {/* simultaneous limit + pause */}
           <div className="flex items-center gap-2">
@@ -197,6 +206,7 @@ export const ConstructionAIPanel: React.FC<{ engine: GameEngine; onHaptic?: () =
                   </div>
                   {v.task && (
                     <>
+                      <p className="mt-1 text-[10px] leading-snug text-[#A7B7C7]" data-testid={`slot-note-${v.slot}`}>{slotNote(v.task)}</p>
                       <div className="mt-1.5 h-1.5 rounded-full bg-[#0B121C] overflow-hidden" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
                         <div className="h-full bg-[#22C99A] transition-[width] duration-300" style={{ width: `${pct}%` }} />
                       </div>
@@ -232,47 +242,64 @@ export const ConstructionAIPanel: React.FC<{ engine: GameEngine; onHaptic?: () =
             <span className="text-[#F1F5F9] font-semibold">Last decision: </span>{a.lastDecisionReason ?? '—'}
           </p>
 
-          {/* priorities */}
+          {/* behaviour toggles */}
+          <div className="space-y-1" aria-label="Construction behaviour">
+            {OPTIONS.map(o => {
+              const on = a[o.key] ?? (o.key !== 'prioritizeDefense');
+              return (
+                <button
+                  key={o.key}
+                  role="switch"
+                  aria-checked={on}
+                  title={o.hint}
+                  onClick={() => { onHaptic?.(); setOption(engine, o.key, !on); bump(); }}
+                  className="w-full min-h-[40px] flex items-center justify-between gap-2 rounded-lg bg-[#131F2D] border border-[#2a3b4f] px-2.5 text-left"
+                >
+                  <span className="text-[11px] text-[#F1F5F9]">{o.label}</span>
+                  <span className={`shrink-0 w-9 h-5 rounded-full relative transition-colors ${on ? 'bg-[#22C99A]' : 'bg-[#2a3b4f]'}`}>
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${on ? 'left-[18px]' : 'left-0.5'}`} />
+                  </span>
+                </button>
+              );
+            })}
+            {(() => {
+              const on = a.reserveCredits > 0;
+              return (
+                <button
+                  role="switch"
+                  aria-checked={on}
+                  title={`Keeps $${DEFAULT_RESERVE} untouched so units and repairs stay possible`}
+                  onClick={() => { onHaptic?.(); setEmergencyReserve(engine, on ? 0 : DEFAULT_RESERVE); bump(); }}
+                  className="w-full min-h-[40px] flex items-center justify-between gap-2 rounded-lg bg-[#131F2D] border border-[#2a3b4f] px-2.5 text-left"
+                >
+                  <span className="text-[11px] text-[#F1F5F9]">Reserve emergency credits{on ? ` ($${formatCompact(a.reserveCredits)})` : ''}</span>
+                  <span className={`shrink-0 w-9 h-5 rounded-full relative transition-colors ${on ? 'bg-[#22C99A]' : 'bg-[#2a3b4f]'}`}>
+                    <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${on ? 'left-[18px]' : 'left-0.5'}`} />
+                  </span>
+                </button>
+              );
+            })()}
+          </div>
+
+          {/* decision log */}
           <button
-            onClick={() => setShowPriorities(p => !p)}
-            aria-expanded={showPriorities}
+            onClick={() => setShowLog(p => !p)}
+            aria-expanded={showLog}
             className="w-full flex items-center justify-between text-[11px] font-semibold text-[#39B8F2] min-h-[32px]"
           >
-            <span>Building priorities</span>
-            <ChevronDown className={`w-4 h-4 transition-transform ${showPriorities ? 'rotate-180' : ''}`} />
+            <span className="flex items-center gap-1.5"><ScrollText className="w-3.5 h-3.5" />AI decision log ({log.length})</span>
+            <ChevronDown className={`w-4 h-4 transition-transform ${showLog ? 'rotate-180' : ''}`} />
           </button>
-          {showPriorities && (
-            <div className="space-y-2">
-              <div className="grid grid-cols-3 min-[440px]:grid-cols-5 gap-1" role="radiogroup" aria-label="Building doctrine">
-                {DOCTRINES.map(d => (
-                  <button
-                    key={d.id}
-                    role="radio"
-                    aria-checked={doctrine === d.id}
-                    onClick={() => pickDoctrine(d.id)}
-                    className={`h-9 rounded-lg text-[11px] font-bold px-1 truncate ${
-                      doctrine === d.id ? 'bg-[#22C99A] text-[#0B121C]' : 'bg-[#131F2D] text-[#A7B7C7] border border-[#2a3b4f]'
-                    }`}
-                  >
-                    {d.label}
-                  </button>
-                ))}
-              </div>
-              {doctrine === 'custom' && a.customWeights && (
-                <div className="rounded-lg bg-[#131F2D]/70 p-2 space-y-0.5">
-                  {WEIGHTS.map(w => (
-                    <div key={w.key} className="flex items-center justify-between gap-2 min-h-[34px]">
-                      <span className="text-[11px] text-[#A7B7C7]">{w.label}</span>
-                      <span className="flex items-center gap-1">
-                        <button aria-label={`${w.label} priority minus`} onClick={() => { a.customWeights![w.key] = Math.max(0, a.customWeights![w.key] - 5); bump(); }} className="w-8 h-8 rounded-lg bg-[#1B2B3C] border border-[#2a3b4f] text-[#F1F5F9] font-bold active:scale-95">−</button>
-                        <span className="w-10 text-center text-xs font-bold tabular-nums text-[#F1F5F9]">{a.customWeights![w.key]}</span>
-                        <button aria-label={`${w.label} priority plus`} onClick={() => { a.customWeights![w.key] = Math.min(100, a.customWeights![w.key] + 5); bump(); }} className="w-8 h-8 rounded-lg bg-[#1B2B3C] border border-[#2a3b4f] text-[#F1F5F9] font-bold active:scale-95">+</button>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+          {showLog && (
+            <ul className="max-h-56 overflow-y-auto rounded-lg bg-[#131F2D]/70 p-2 space-y-1" data-testid="construction-log">
+              {log.length === 0 && <li className="text-[10px] text-[#A7B7C7]">No decisions yet.</li>}
+              {log.map((l, i) => (
+                <li key={`${l.t}-${i}`} className="text-[10px] leading-snug">
+                  <span className="text-[#A7B7C7] tabular-nums">{fmtClock(l.t)} </span>
+                  <span className={LOG_TONE[l.kind] ?? 'text-[#A7B7C7]'}>{l.text}</span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}

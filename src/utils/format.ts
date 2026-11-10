@@ -69,3 +69,13 @@ export function formatSigned(n: number | undefined): string {
   const v = Math.round(Number.isFinite(n) ? (n as number) : 0);
   return (v > 0 ? '+' : v < 0 ? '-' : '') + formatCompact(Math.abs(v));
 }
+
+/**
+ * Objective progress for display: shown is capped at the requirement ("2/2", never "44/2"), while the real count is
+ * returned as `actual` for diagnostics (tooltips, logs). Completion itself is decided elsewhere (actual >= required).
+ */
+export function cappedProgress(actual: number, required: number): { shown: number; required: number; actual: number; met: boolean; text: string } {
+  const a = Number.isFinite(actual) ? Math.max(0, Math.floor(actual)) : 0;
+  const shown = Math.min(a, required);
+  return { shown, required, actual: a, met: a >= required, text: `${shown}/${required}` };
+}

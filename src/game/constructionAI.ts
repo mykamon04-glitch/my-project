@@ -5,7 +5,8 @@
 
 import { BUILDING_CONFIGS } from '../data/gameData';
 import type { GameEngine } from './engine';
-import { AIArchitectDecision, Building, BuildingType, ConstructionTask } from '../types/game';
+import { analyseBase, evaluateCandidates, pickSite, settingsOf, BUILDING_ROLES, STRATEGIES, DEFAULT_SETTINGS, CandidateEval } from './constructionStrategy';
+import { AIArchitectDecision, Building, BuildingType, ConstructionLogEntry, ConstructionStrategyId, ConstructionTask } from '../types/game';
 
 /**
  * Multi-build Construction AI (V6.2): up to five independent construction projects at once.
@@ -35,7 +36,42 @@ export function ensureArchitectState(e: GameEngine): void {
   if (typeof a.nextTaskSeq !== 'number') a.nextTaskSeq = 1;
   if (typeof a.lastPlanTime !== 'number') a.lastPlanTime = -999;
   a.maxConcurrentConstruction = clampLimit(a.maxConcurrentConstruction);
+  // V8.1 settings: older saves get safe defaults
+  if (!a.strategy || !STRATEGIES.some(x => x.id === a.strategy)) a.strategy = DEFAULT_SETTINGS.strategy;
+  if (typeof a.avoidDuplicates !== 'boolean') a.avoidDuplicates = DEFAULT_SETTINGS.avoidDuplicates;
+  if (typeof a.allowPrerequisites !== 'boolean') a.allowPrerequisites = DEFAULT_SETTINGS.allowPrerequisites;
+  if (typeof a.prioritizeDefense !== 'boolean') a.prioritizeDefense = DEFAULT_SETTINGS.prioritizeDefense;
+  if (!a.typeLimits) a.typeLimits = {};
+  if (!Array.isArray(a.decisionLog)) a.decisionLog = [];
+  if (!a.lastPlanned) a.lastPlanned = {};
 }
+
+// ───────────────────────── decision log (bounded, event-based) ─────────────────────────
+
+const LOG_LIMIT = 40;
+const lastReason = new WeakMap<object, Record<string, string>>(); // what was last said about each type (in memory only)
+
+/** Append a log entry, skipping exact repeats of the previous entry. Never called per frame. */
+export function logEvent(e: GameEngine, kind: ConstructionLogEntry['kind'], text: string, type?: BuildingType): void {
+  const log = e.aiArchitect.decisionLog!;
+  const prev = log[0];
+  if (prev && prev.text === text && prev.kind === kind) return;
+  log.unshift({ t: Math.round(e.gameTime), kind, type, text });
+  if (log.length > LOG_LIMIT) log.length = LOG_LIMIT;
+}
+
+/** Say something about a building type only when the reason changed since last time. */
+function logOnChange(e: GameEngine, kind: ConstructionLogEntry['kind'], type: BuildingType, text: string): boolean {
+  const memo = lastReason.get(e.aiArchitect) ?? {};
+  lastReason.set(e.aiArchitect, memo);
+  const key = `${kind}:${type}`;
+  const shape = text.replace(/[\d.,]+/g, '#'); // numbers change every cycle; only a change of meaning is news
+  if (memo[key] === shape) return false;
+  memo[key] = shape;
+  logEvent(e, kind, text, type);
+  return true;
+}
+const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
 
 export const clampLimit = (n: number | undefined) => Math.max(1, Math.min(MAX_SLOTS, Math.round(Number.isFinite(n) ? (n as number) : 1)));
 
@@ -105,6 +141,8 @@ function finish(e: GameEngine, t: ConstructionTask, status: 'completed' | 'faile
   if (note) t.note = note;
   a.tasks = a.tasks!.filter(x => x.id !== t.id);
   a.taskHistory!.unshift({ ...t });
+  if (status === 'completed') logEvent(e, 'done', `Completed ${BUILDING_CONFIGS[t.type].name}.`, t.type);
+  else if (status === 'failed') logEvent(e, 'info', `${BUILDING_CONFIGS[t.type].name} failed: ${note ?? 'unknown reason'}.`, t.type);
   if (a.taskHistory!.length > HISTORY_LIMIT) a.taskHistory!.length = HISTORY_LIMIT;
 }
 
@@ -114,10 +152,21 @@ function freeSlot(e: GameEngine): number {
   return MAX_SLOTS;
 }
 
-/** First valid site that does not collide with another project's reserved site (or null). */
+/**
+ * Best site for `type`: the engine's own validated candidates (terrain, overlap, exits), minus the sites reserved by other
+ * projects, re-ranked for layout (spread defenses, grouped production, no crowding). A one-cell gap is kept around existing
+ * buildings when space allows, so the base is not packed into solid blocks.
+ */
 function findSite(e: GameEngine, type: BuildingType, exceptId?: string): { x: number; y: number } | null {
-  const recs = e.getRecommendedBuildingPositions(type, 0, { limit: 24, reserved: reservedRects(e, exceptId), margin: SITE_MARGIN, ignoreFunds: true });
-  return recs.length ? { x: recs[0].gridX, y: recs[0].gridY } : null;
+  const reserved = reservedRects(e, exceptId);
+  const around = e.buildings.filter(b => b.faction === 'player' && b.hp > 0).map(b => ({ x: b.x, y: b.y, w: b.width, h: b.height }));
+  const ask = (rects: Rect[]) => e.getRecommendedBuildingPositions(type, 0, { limit: 24, reserved: rects, margin: SITE_MARGIN, ignoreFunds: true });
+  let recs = ask([...reserved, ...around]);
+  if (!recs.length) recs = ask(reserved); // crowded base: fall back to the engine's own spacing
+  if (!recs.length) return null;
+  const others = e.aiArchitect.tasks!.filter(t => isPending(t) && t.id !== exceptId);
+  const snap = analyseBase(e, others);
+  return pickSite(e, type, snap, recs, others.map(t => ({ x: t.gridX, y: t.gridY })));
 }
 
 function isBlocked(e: GameEngine, type: BuildingType): boolean {
@@ -193,7 +242,56 @@ function replan(e: GameEngine, t: ConstructionTask): void {
   }
 }
 
-/** Plan at most one new project, choosing with the engine's existing doctrine logic. */
+function createTask(
+  e: GameEngine,
+  type: BuildingType,
+  site: { x: number; y: number },
+  o: { reason: string; approved: boolean; requiresApproval?: boolean; prerequisiteFor?: BuildingType; score?: number }
+): ConstructionTask {
+  const a = e.aiArchitect;
+  const task: ConstructionTask = {
+    id: `ctask_${a.nextTaskSeq!++}`,
+    slot: freeSlot(e),
+    type,
+    gridX: site.x,
+    gridY: site.y,
+    rotation: 0,
+    status: 'planned',
+    reason: o.reason,
+    approved: o.approved,
+    requiresApproval: o.requiresApproval || undefined,
+    prerequisiteFor: o.prerequisiteFor,
+    score: o.score,
+    cost: BUILDING_CONFIGS[type].cost,
+    charged: false,
+    createdAt: e.gameTime,
+    retries: 0,
+  };
+  a.tasks!.push(task);
+  a.lastPlanned![type] = e.gameTime;
+  return task;
+}
+
+/**
+ * Commander-initiated project: takes a free slot, reserves a laid-out site and then follows exactly the same
+ * reservation, charging and construction path as an AI-planned project. Returns null if no slot or no site is free.
+ */
+export function queueProject(e: GameEngine, type: BuildingType, o: { approved?: boolean; reason?: string } = {}): ConstructionTask | null {
+  ensureArchitectState(e);
+  if (e.aiArchitect.tasks!.filter(isActive).length >= getLimit(e)) return null;
+  const site = findSite(e, type);
+  if (!site) return null;
+  const task = createTask(e, type, site, { reason: o.reason ?? 'Queued by the commander', approved: o.approved ?? true });
+  logEvent(e, 'build', `Queued ${BUILDING_CONFIGS[type].name}: ${task.reason}.`, type);
+  startReady(e);
+  return task;
+}
+
+/**
+ * Plan at most one new project, or none. The decision comes from the explainable scoring engine
+ * (constructionStrategy.ts): mandatory gates first, then need x strategy weight x duplicate decay. If nothing clears the
+ * minimum score the AI deliberately leaves the slot empty. Planned projects count as existing for the next decision.
+ */
 function planOne(e: GameEngine): boolean {
   const a = e.aiArchitect;
   const active = a.tasks!.filter(isActive);
@@ -201,40 +299,59 @@ function planOne(e: GameEngine): boolean {
   // do not pile up more unaffordable projects behind one that is already waiting for credits
   if (active.some(t => t.status === 'waiting_resources')) return false;
 
-  // planned-but-not-built projects are not real buildings yet, so tell the chooser about them
-  const virtual: BuildingType[] = active.filter(isPending).map(t => t.type);
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const pick = e.chooseArchitectBuilding(virtual);
-    if (!pick) return false;
-    if (isBlocked(e, pick.type)) { virtual.push(pick.type); continue; }
-    const site = findSite(e, pick.type);
+  const st = settingsOf(e);
+  const snap = analyseBase(e, active.filter(isPending));
+  const ranked = evaluateCandidates(e, snap, st, a.lastPlanned!);
+  const chosen = ranked.filter(c => c.verdict === 'chosen');
+  explain(e, ranked, chosen, active.length);
+
+  for (const c of chosen.slice(0, 4)) {
+    if (isBlocked(e, c.type)) continue;
+    const site = findSite(e, c.type);
     if (!site) {
-      a.blockedTypes![pick.type] = e.gameTime + BLOCK_COOLDOWN_S;
-      logDecision(e, pick.type, 'blocked', `No clear site found for ${BUILDING_CONFIGS[pick.type].name}.`);
-      virtual.push(pick.type); // let the doctrine move on to its next priority
+      a.blockedTypes![c.type] = e.gameTime + BLOCK_COOLDOWN_S;
+      logDecision(e, c.type, 'blocked', `No clear site found for ${BUILDING_CONFIGS[c.type].name}.`);
+      logOnChange(e, 'skip', c.type, `Skipping ${BUILDING_CONFIGS[c.type].name}: no clear site available.`);
       continue;
     }
-    const cfg = BUILDING_CONFIGS[pick.type];
-    const task: ConstructionTask = {
-      id: `ctask_${a.nextTaskSeq!++}`,
-      slot: freeSlot(e),
-      type: pick.type,
-      gridX: site.x,
-      gridY: site.y,
-      rotation: 0,
-      status: 'planned',
-      reason: pick.reason,
-      approved: getConstructionMode(e) === 'auto',
-      cost: cfg.cost,
-      charged: false,
-      createdAt: e.gameTime,
-      retries: 0,
-    };
-    a.tasks!.push(task);
-    if (!task.approved) logDecision(e, pick.type, 'recommended', pick.reason, { x: site.x, y: site.y });
+    const cfg = BUILDING_CONFIGS[c.type];
+    const auto = getConstructionMode(e) === 'auto';
+    const task = createTask(e, c.type, site, {
+      reason: c.reason,
+      approved: auto && !c.requiresApproval,
+      requiresApproval: c.requiresApproval,
+      prerequisiteFor: c.prerequisiteFor,
+      score: c.score,
+    });
+    if (c.requiresApproval) {
+      logEvent(e, 'approval', `Approval needed: ${cfg.name} — ${c.reason}. The ${STRATEGIES.find(x => x.id === st.strategy)!.label} strategy would not build it on its own.`, c.type);
+    } else if (!task.approved) {
+      logEvent(e, 'build', `Proposing ${cfg.name}: ${c.reason}.`, c.type);
+      logDecision(e, c.type, 'recommended', c.reason, { x: site.x, y: site.y });
+    } else {
+      logEvent(e, 'build', `Building ${cfg.name}: ${cap(c.reason)}.`, c.type);
+    }
     return true;
   }
   return false;
+}
+
+/** Turn the evaluation into a few log lines. Only changed reasons are logged, never every cycle. */
+function explain(e: GameEngine, ranked: CandidateEval[], chosen: CandidateEval[], activeCount: number): void {
+  const rejected = ranked.filter(c => c.verdict === 'rejected');
+  // contenders that wanted to be built but were stopped
+  for (const r of rejected.filter(x => x.need > 0).slice(0, 2)) {
+    logOnChange(e, 'skip', r.type, `Skipping ${BUILDING_CONFIGS[r.type].name}: ${r.reason}.`);
+  }
+  // the standard "this is enough" statements for core types
+  const core: BuildingType[] = ['barracks', 'vehicle_factory', 'coin_generator', 'power_plant', 'supply_depot'];
+  for (const t of core) {
+    const r = rejected.find(x => x.type === t && x.need === 0 && x.count > 0);
+    if (r && logOnChange(e, 'skip', t, `Skipping ${BUILDING_CONFIGS[t].name}: ${cap(r.reason)}.`)) break; // at most one per cycle
+  }
+  if (!chosen.length) {
+    logOnChange(e, 'idle', 'headquarters', activeCount === 0 ? 'No construction needed: every essential system is adequate.' : 'No further construction needed while current projects finish.');
+  }
 }
 
 /** Start approved projects in slot order. Earlier waiting projects keep their credits reserved. */
@@ -247,6 +364,9 @@ function startReady(e: GameEngine): void {
     if (t.charged) continue; // never charge twice
     const available = e.economy.credits - reserve - committed;
     if (available < t.cost) {
+      if (t.status !== 'waiting_resources') {
+        logOnChange(e, 'delay', t.type, `Delaying ${BUILDING_CONFIGS[t.type].name}: insufficient credits ($${Math.floor(e.economy.credits)} available, $${t.cost} needed plus $${Math.round(reserve)} reserve).`);
+      }
       t.status = 'waiting_resources'; // wait; no placement attempts until it is affordable
       committed += t.cost;
       continue;
@@ -281,7 +401,7 @@ export function planAndStartConstruction(e: GameEngine): void {
   if (getConstructionMode(e) === 'off' || a.isPaused) return;
 
   if (getConstructionMode(e) === 'auto') {
-    for (const t of a.tasks!.filter(x => isPending(x) && !x.approved)) t.approved = true;
+    for (const t of a.tasks!.filter(x => isPending(x) && !x.approved && !x.requiresApproval)) t.approved = true;
   }
 
   // 1) pending sites must still be valid (a manual build may have taken the spot)
@@ -364,7 +484,7 @@ export function setConstructionMode(e: GameEngine, mode: 'off' | 'suggest' | 'au
   } else {
     a.enabled = true;
     if (a.mode === 'assisted' || a.mode === 'manual') a.mode = a.lastAutoDoctrine ?? 'balanced';
-    for (const t of a.tasks!.filter(x => isPending(x) && !x.approved)) t.approved = true; // AUTO manages them itself
+    for (const t of a.tasks!.filter(x => isPending(x) && !x.approved && !x.requiresApproval)) t.approved = true; // AUTO manages them itself (strategy-violating ones still need the player)
   }
   syncConstructionTasks(e);
 }
@@ -427,3 +547,36 @@ export function getSlotViews(e: GameEngine): SlotView[] {
   }
   return out;
 }
+
+// ───────────────────────── strategy and options ─────────────────────────
+
+/** Switch strategy. Projects that were planned under the old strategy and have not started are released (nothing was spent). */
+export function setStrategy(e: GameEngine, strategy: ConstructionStrategyId): void {
+  ensureArchitectState(e);
+  const a = e.aiArchitect;
+  if (a.strategy === strategy) return;
+  a.strategy = strategy;
+  for (const t of [...a.tasks!].filter(isPending)) finish(e, t, 'cancelled', 'Strategy changed');
+  a.blockedTypes = {};
+  logEvent(e, 'info', `Strategy set to ${STRATEGIES.find(x => x.id === strategy)!.label}.`);
+}
+
+export function setOption(e: GameEngine, key: 'avoidDuplicates' | 'allowPrerequisites' | 'prioritizeDefense', value: boolean): void {
+  ensureArchitectState(e);
+  e.aiArchitect[key] = value;
+}
+
+/** Player restriction: at most `n` of this building (0 = never). Mission-required buildings are never blocked by it. */
+export function setTypeLimit(e: GameEngine, type: BuildingType, n: number | undefined): void {
+  ensureArchitectState(e);
+  const limits = e.aiArchitect.typeLimits!;
+  if (n === undefined || !Number.isFinite(n)) delete limits[type];
+  else limits[type] = Math.max(0, Math.round(n));
+}
+
+/** Emergency credits the AI never spends (uses the existing reserve setting). */
+export function setEmergencyReserve(e: GameEngine, credits: number): void {
+  e.aiArchitect.reserveCredits = Math.max(0, Math.min(5000, Math.round(credits)));
+}
+
+export const roleLabel = (t: BuildingType) => BUILDING_ROLES[t].join(' / ');
