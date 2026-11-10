@@ -62,6 +62,7 @@ import {
   lerpAngle,
 } from './combat';
 import { calculateSquadOffsets, PathfindingGrid } from './pathfinding';
+import { ensureArchitectState, getReservedCredits, syncConstructionTasks, planAndStartConstruction, approveTask, cancelTask } from './constructionAI';
 
 export class GameEngine {
   public mode: GameMode;
@@ -126,7 +127,12 @@ export class GameEngine {
     enabled: false,
     mode: 'balanced',
     reserveCredits: 450,
-    maxConcurrentConstruction: 1,
+    maxConcurrentConstruction: 5, // up to five simultaneous AI construction projects
+    tasks: [],
+    taskHistory: [],
+    blockedTypes: {},
+    lastPlanTime: -999,
+    nextTaskSeq: 1,
     isPaused: false,
     decisionsHistory: [],
     pendingAssistedRecommendation: null,
@@ -467,6 +473,7 @@ export class GameEngine {
 
     // 2. Buildings Update
     this.updateBuildings(dt);
+    syncConstructionTasks(this); // Construction AI statuses follow the real buildings every frame
 
     // 3. Projectiles & Ballistics
     this.updateProjectiles(dt);
@@ -1764,7 +1771,8 @@ export class GameEngine {
     gridY: number,
     faction: Faction = 'player',
     ignoreBuildingId?: string,
-    rotation: number = 0
+    rotation: number = 0,
+    ignoreFunds: boolean = false // site-only check (used by Construction AI, which handles funds itself)
   ): { valid: boolean; reason?: string } {
     const config = BUILDING_CONFIGS[type];
     const isRotated = rotation === 90 || rotation === 270;
@@ -1868,7 +1876,7 @@ export class GameEngine {
     }
 
     // 7. Resource affordability check
-    if (faction === 'player' && this.economy.credits < config.cost) {
+    if (!ignoreFunds && faction === 'player' && this.economy.credits < config.cost) {
       return { valid: false, reason: `Insufficient funds (Requires $${config.cost.toLocaleString()})` };
     }
 
@@ -1974,7 +1982,11 @@ export class GameEngine {
   }
 
   // --- Intelligent Building Placement Assistant ---
-  public getRecommendedBuildingPositions(type: BuildingType, rotation: number = 0): BuildingPlacementRecommendation[] {
+  public getRecommendedBuildingPositions(
+    type: BuildingType,
+    rotation: number = 0,
+    opts?: { limit?: number; reserved?: { x: number; y: number; w: number; h: number }[]; margin?: number; ignoreFunds?: boolean }
+  ): BuildingPlacementRecommendation[] {
     const recommendations: BuildingPlacementRecommendation[] = [];
     const hq = this.buildings.find(b => b.type === 'headquarters' && b.faction === 'player');
     const playerBuildings = this.buildings.filter(b => b.faction === 'player' && b.hp > 0);
@@ -2018,8 +2030,13 @@ export class GameEngine {
         const testGx = Math.round(anchorX + Math.cos(a) * r);
         const testGy = Math.round(anchorY + Math.sin(a) * r);
 
-        const check = this.canPlaceBuilding(type, testGx, testGy, 'player', undefined, rotation);
+        const check = this.canPlaceBuilding(type, testGx, testGy, 'player', undefined, rotation, opts?.ignoreFunds ?? false);
         if (!check.valid) continue;
+        // Sites already promised to other (not yet started) construction projects are off limits.
+        if (opts?.reserved) {
+          const mg = opts.margin ?? 0;
+          if (opts.reserved.some(r => testGx < r.x + r.w + mg && testGx + bw + mg > r.x && testGy < r.y + r.h + mg && testGy + bh + mg > r.y)) continue;
+        }
 
         let score = 55;
         let label: 'RECOMMENDED' | 'ALTERNATIVE' | 'EXPANSION' = 'RECOMMENDED';
@@ -2114,7 +2131,7 @@ export class GameEngine {
     }
 
     candidates.sort((a, b) => b.score - a.score);
-    const top = candidates.slice(0, 3);
+    const top = candidates.slice(0, opts?.limit ?? 3);
     if (top.length >= 1) top[0].label = 'RECOMMENDED';
     if (top.length >= 2) top[1].label = 'ALTERNATIVE';
     if (top.length >= 3) top[2].label = 'EXPANSION';
@@ -2758,7 +2775,7 @@ export class GameEngine {
   // --- Centralized Autonomous Military Production Scheduler (AI Commander) ---
   public updateAutoProduction() {
     if (!this.autoProduction.enabled) return;
-    if (this.economy.credits < this.autoProduction.reserveCredits + 80) return;
+    if (this.economy.credits < this.autoProduction.reserveCredits + 80 + getReservedCredits(this)) return;
     if (this.economy.population >= this.economy.populationCap) return;
 
     const playerHQ = this.buildings.find(b => b.type === 'headquarters' && b.faction === 'player');
@@ -3076,34 +3093,31 @@ export class GameEngine {
   }
 
   // --- Centralized Autonomous Base Construction Manager (AI Base Architect) ---
+  /**
+   * Construction AI tick. Planning, site reservation, resource handling and starting live in constructionAI.ts;
+   * all of it goes through placeBuilding(), so costs, build times and placement rules are the original ones.
+   */
   public updateAIArchitect() {
     if (!this.aiArchitect.enabled || this.aiArchitect.isPaused || this.aiArchitect.mode === 'manual') {
       return;
     }
+    planAndStartConstruction(this);
+  }
 
-    // Do not issue new recommendation if assisted recommendation is still awaiting player review
-    if (this.aiArchitect.mode === 'assisted' && this.aiArchitect.pendingAssistedRecommendation) {
-      return;
-    }
-
-    // Respect max concurrent ongoing construction
-    const underConstruction = this.buildings.filter(
-      b => b.faction === 'player' && b.isUnderConstruction && b.constructionProgress < 1.0
-    );
-    if (underConstruction.length >= this.aiArchitect.maxConcurrentConstruction) {
-      this.aiArchitect.lastDecisionReason = `Crew active: Waiting for ongoing construction to complete (${underConstruction.length}/${this.aiArchitect.maxConcurrentConstruction}).`;
-      return;
-    }
-
-    // Shared Treasury check: coordinate with Auto Troop Production so systems do not bankrupt each other
-    const effectiveReserve = Math.max(
-      this.aiArchitect.reserveCredits,
-      this.autoProduction.enabled ? this.autoProduction.reserveCredits : 0
-    );
-
-    const playerBuildings = this.buildings.filter(b => b.faction === 'player' && b.hp > 0);
+  /**
+   * The original doctrine decision tree, unchanged, extracted so it can be asked repeatedly.
+   * `plannedTypes` are projects that are planned but not placed yet; they are counted as if they already
+   * existed, so five simultaneous plans never repeat the same building.
+   */
+  public chooseArchitectBuilding(plannedTypes: BuildingType[] = []): { type: BuildingType; reason: string } | null {
+    const virtual = plannedTypes.map(type => ({ type, faction: 'player', hp: 1, isUnderConstruction: true, constructionProgress: 0 }) as unknown as Building);
+    const playerBuildings = [...this.buildings.filter(b => b.faction === 'player' && b.hp > 0), ...virtual];
+    const underConstruction = [
+      ...this.buildings.filter(b => b.faction === 'player' && b.isUnderConstruction && b.constructionProgress < 1.0),
+      ...virtual,
+    ];
     const playerHQ = playerBuildings.find(b => b.type === 'headquarters');
-    if (!playerHQ && playerBuildings.length === 0) return;
+    if (!playerHQ && playerBuildings.length === 0) return null;
 
     // Assess base strategic requirements
     const powerProduced = this.economy.powerSupply;
@@ -3298,101 +3312,18 @@ export class GameEngine {
       }
     }
 
-    if (!chosenType) return;
-
-    const config = BUILDING_CONFIGS[chosenType];
-    const requiredCredits = effectiveReserve + config.cost;
-
-    if (this.economy.credits < requiredCredits) {
-      this.aiArchitect.lastDecisionReason = `Saving credits for ${config.name} ($${Math.floor(this.economy.credits)} / $${requiredCredits}).`;
-      return;
-    }
-
-    // Find optimal placement coordinates
-    const recs = this.getRecommendedBuildingPositions(chosenType, 0);
-    if (recs.length === 0) {
-      const blockedDecision: AIArchitectDecision = {
-        id: `dec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        time: this.gameTime,
-        buildingType: chosenType,
-        action: 'blocked',
-        reason: `No clear site found near HQ for ${config.name}. Expansion required.`,
-        cost: config.cost,
-      };
-      this.aiArchitect.decisionsHistory.unshift(blockedDecision);
-      if (this.aiArchitect.decisionsHistory.length > 20) this.aiArchitect.decisionsHistory.pop();
-      this.aiArchitect.lastDecisionReason = blockedDecision.reason;
-      return;
-    }
-
-    const best = recs[0];
-
-    // If Assisted Mode: Queue recommendation for user confirmation
-    if (this.aiArchitect.mode === 'assisted') {
-      this.aiArchitect.pendingAssistedRecommendation = {
-        id: `rec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        type: chosenType,
-        gridX: best.gridX,
-        gridY: best.gridY,
-        rotation: 0,
-        reason,
-        advantage: best.advantage || 'Optimal strategic coverage',
-        cost: config.cost,
-      };
-      this.aiArchitect.lastDecisionReason = `AI Recommendation: ${config.name} ready for Commander review.`;
-      this.aiArchitect.lastDecisionTime = this.gameTime;
-
-      const dec: AIArchitectDecision = {
-        id: `dec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        time: this.gameTime,
-        buildingType: chosenType,
-        action: 'recommended',
-        reason,
-        gridPos: { x: best.gridX, y: best.gridY },
-        cost: config.cost,
-      };
-      this.aiArchitect.decisionsHistory.unshift(dec);
-      if (this.aiArchitect.decisionsHistory.length > 20) this.aiArchitect.decisionsHistory.pop();
-      return;
-    }
-
-    // Automated Mode: Execute Placement
-    const placed = this.placeBuilding(chosenType, best.gridX, best.gridY, 'player', 0);
-    if (placed) {
-      this.floatingTexts.push({
-        id: Math.random().toString(),
-        x: placed.pixelX,
-        y: placed.pixelY - 32,
-        text: `AI ARCHITECT: +${config.name.toUpperCase()}`,
-        color: '#38bdf8',
-        life: 0,
-        maxLife: 2.5,
-      });
-
-      this.addStrategicLogEntry(
-        `AI Base Architect constructed ${config.name} (${reason}).`,
-        'success'
-      );
-
-      const decision: AIArchitectDecision = {
-        id: `dec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        time: this.gameTime,
-        buildingType: chosenType,
-        action: 'built',
-        reason,
-        gridPos: { x: best.gridX, y: best.gridY },
-        cost: config.cost,
-      };
-      this.aiArchitect.decisionsHistory.unshift(decision);
-      if (this.aiArchitect.decisionsHistory.length > 20) this.aiArchitect.decisionsHistory.pop();
-      this.aiArchitect.lastDecisionReason = `Constructed ${config.name}. ${reason}`;
-      this.aiArchitect.lastDecisionTime = this.gameTime;
-    }
+    return chosenType ? { type: chosenType, reason } : null;
   }
 
   public acceptAssistedRecommendation(): boolean {
     const rec = this.aiArchitect.pendingAssistedRecommendation;
     if (!rec) return false;
+    // V6.2: the banner mirrors a Construction AI project; approving it lets that project start normally
+    if (String(rec.id).startsWith('ctask_')) {
+      const ok = approveTask(this, rec.id);
+      if (ok) soundEngine.playClick();
+      return ok;
+    }
     const config = BUILDING_CONFIGS[rec.type];
     if (this.economy.credits < config.cost) {
       soundEngine.playError();
@@ -3417,6 +3348,12 @@ export class GameEngine {
   }
 
   public rejectAssistedRecommendation() {
+    const pending = this.aiArchitect.pendingAssistedRecommendation;
+    if (pending && String(pending.id).startsWith('ctask_')) {
+      cancelTask(this, pending.id);
+      soundEngine.playClick();
+      return;
+    }
     if (this.aiArchitect.pendingAssistedRecommendation) {
       const type = this.aiArchitect.pendingAssistedRecommendation.type;
       this.aiArchitect.pendingAssistedRecommendation = null;
@@ -3994,7 +3931,7 @@ export class GameEngine {
         limitLabel: 'Concurrent Build Sites',
         limitValue: this.aiArchitect.maxConcurrentConstruction,
         limitMin: 1,
-        limitMax: 3,
+        limitMax: 5,
         limitStep: 1,
         lastActionTime: this.aiArchitect.lastDecisionTime || 0,
       },
@@ -4301,6 +4238,7 @@ export class GameEngine {
 
       // Restore AI Commander modules
       if (state.aiArchitect) this.aiArchitect = state.aiArchitect;
+      ensureArchitectState(this); // older saves: add empty task state, keep their saved limit
       if (state.autoProduction) this.autoProduction = state.autoProduction;
       if (state.tacticalSettings) this.tacticalIntelligence.settings = state.tacticalSettings;
       if (typeof state.aiMedicalEnabled === 'boolean') this.aiMedicalEnabled = state.aiMedicalEnabled;

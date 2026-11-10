@@ -1,5 +1,7 @@
 # Iron Dominion — Audit, Repairs and Upgrades (V5.1 → V6.0)
 
+> **V6.2:** the multi-build Construction AI is documented in [`CONSTRUCTION_AI.md`](CONSTRUCTION_AI.md).
+
 Baseline: the untouched Google AI Studio project is tag `baseline-aistudio-original`
 (`git checkout baseline-aistudio-original` restores it exactly).
 

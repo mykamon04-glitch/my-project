@@ -9,6 +9,7 @@ Drive the real UI (Playwright) and assert on real state changes, not appearance.
     node tests/e2e/placement-cancel.cjs
     node tests/e2e/graphics-settings.cjs
     node tests/e2e/smart-recruitment.cjs
+    node tests/e2e/construction-ai.cjs   # uses Sandbox mode
     node tests/e2e/number-scan.cjs    # slow (~2 min)
 
 Requires the `playwright` package and a Chromium build. `smoke.cjs` checks: no horizontal overflow, placement

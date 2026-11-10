@@ -504,6 +504,33 @@ export type AIArchitectMode =
   | 'economy'
   | 'custom';
 
+/** Lifecycle of one AI construction project (one "slot" on the Construction AI dashboard). */
+export type ConstructionTaskStatus = 'planned' | 'waiting_resources' | 'constructing' | 'completed' | 'failed' | 'cancelled';
+
+/**
+ * One Construction AI project. While `constructing`, progress is NOT stored here: it is read from the real
+ * building (`buildingId`) every time, so the dashboard always shows true simulation state.
+ */
+export interface ConstructionTask {
+  id: string;
+  slot: number; // 1..5, the dashboard card this project occupies
+  type: BuildingType;
+  gridX: number; // reserved site (top-left grid cell), valid while planned / waiting
+  gridY: number;
+  rotation: number;
+  status: ConstructionTaskStatus;
+  reason: string;
+  approved: boolean; // SUGGEST mode: false until the player approves
+  cost: number; // credits this project will spend (from BUILDING_CONFIGS)
+  charged: boolean; // true once the cost has been deducted; guards against double charging
+  buildingId?: string; // the real building once construction has started
+  createdAt: number; // game time
+  startedAt?: number;
+  finishedAt?: number;
+  retries: number; // bounded site re-plans
+  note?: string; // failure / cancel explanation
+}
+
 export interface AIArchitectDecision {
   id: string;
   time: number;
@@ -532,6 +559,13 @@ export interface AIArchitectSettings {
   lastDecisionReason?: string;
   lastDecisionTime?: number;
   decisionsHistory: AIArchitectDecision[];
+  /** Multi-build Construction AI (V6.2). Persisted with the rest of aiArchitect. */
+  lastAutoDoctrine?: AIArchitectMode; // doctrine to return to when switching SUGGEST -> AUTO
+  tasks?: ConstructionTask[];
+  taskHistory?: ConstructionTask[]; // most recent finished / failed / cancelled projects
+  blockedTypes?: Record<string, number>; // building type -> game time until which it is not re-attempted
+  lastPlanTime?: number;
+  nextTaskSeq?: number;
   pendingAssistedRecommendation?: {
     id: string;
     type: BuildingType;
