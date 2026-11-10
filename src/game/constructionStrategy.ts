@@ -31,6 +31,8 @@ export const STRATEGIES: { id: ConstructionStrategy; label: string; blurb: strin
   { id: 'army_production', label: 'Army Production', blurb: 'Barracks, factories and air facilities, added only where demand shows it.' },
   { id: 'economy', label: 'Economy & Infrastructure', blurb: 'Income, power, storage and capacity. No defenses unless you enable base defense.' },
   { id: 'adaptive', label: 'Adaptive Commander', blurb: 'Re-prioritises continuously from power, income, threats, coverage and production demand.' },
+  { id: 'support_recovery', label: 'Support & Recovery', blurb: 'Repair, power restoration, logistics and medical support. Rebuilds what was lost; no army or economy expansion.' },
+  { id: 'strategic', label: 'Strategic Planner', blurb: 'Weighs the whole base (income, power, threats, queues, losses, budget) and only commits to high-value projects.' },
 ];
 
 /** Role classification of every existing building (a building may have several roles). */
@@ -55,6 +57,7 @@ export const BUILDING_ROLES: Record<BuildingType, BuildingRole[]> = {
 };
 
 export const MIN_SCORE = 25;
+const minScoreFor = (st: ConstructionSettings) => (st.strategy === 'strategic' ? 35 : MIN_SCORE);
 
 /** Mission objective id -> building the mission requires (campaign). */
 const MISSION_BUILDINGS: Record<string, BuildingType> = {
@@ -70,6 +73,7 @@ export interface ConstructionSettings {
   allowPrerequisites: boolean;   // support policy: essential power / prerequisite buildings outside the strategy's focus
   prioritizeDefense: boolean;    // also approves defenses in non-defense strategies and boosts their need
   typeLimits: Partial<Record<BuildingType, number>>; // player restrictions (0 = never)
+  rejected: Record<string, number>; // rejected suggestions: type -> game time until which it is not proposed again
 }
 
 export const DEFAULT_SETTINGS: ConstructionSettings = {
@@ -78,6 +82,7 @@ export const DEFAULT_SETTINGS: ConstructionSettings = {
   allowPrerequisites: true,
   prioritizeDefense: false,
   typeLimits: {},
+  rejected: {},
 };
 
 export function settingsOf(e: GameEngine): ConstructionSettings {
@@ -88,6 +93,7 @@ export function settingsOf(e: GameEngine): ConstructionSettings {
     allowPrerequisites: a.allowPrerequisites ?? DEFAULT_SETTINGS.allowPrerequisites,
     prioritizeDefense: a.prioritizeDefense ?? DEFAULT_SETTINGS.prioritizeDefense,
     typeLimits: a.typeLimits ?? {},
+    rejected: a.rejected ?? {},
   };
 }
 
@@ -121,7 +127,23 @@ export interface BaseSnapshot {
   missionNeeds: Set<BuildingType>;
   unapproved: Set<BuildingType>; // pending projects still waiting for the player
   hqPx: { x: number; y: number };
+  recentLosses: BuildingType[];      // completed structures destroyed in the last 3 minutes
+  longRange: number;                 // visible enemy units that outrange ordinary turrets
+  recruitEnabled: boolean;           // automatic recruitment (Smart Recruitment) is on
+  productionQueued: number;          // units currently queued across completed barracks / factories
+  productionIdle: boolean;           // production exists but nothing is queued
 }
+
+const THREAT_RANK = ['GREEN', 'YELLOW', 'ORANGE', 'RED'];
+export const THREAT_HOLD_S = 20;
+/** Hysteresis: a threat level that dropped in the last few seconds still counts, so priorities do not flicker. */
+export function effectiveThreat(e: GameEngine): string {
+  const cur = e.tacticalIntelligence.threatLevel;
+  const m = e.aiArchitect.threatMemo;
+  if (m && THREAT_RANK.indexOf(m.level) > THREAT_RANK.indexOf(cur) && e.gameTime - m.t < THREAT_HOLD_S) return m.level;
+  return cur;
+}
+const compass = (a: number) => ['east', 'south-east', 'south', 'south-west', 'west', 'north-west', 'north', 'north-east'][Math.round((((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (Math.PI / 4)) % 8];
 
 const centre = (b: { pixelX: number; pixelY: number }) => ({ x: b.pixelX, y: b.pixelY });
 
@@ -200,7 +222,7 @@ export function analyseBase(e: GameEngine, pending: ConstructionTask[]): BaseSna
     armyUnits: units.length,
     infantry: units.filter(u => UNIT_CONFIGS[u.type].category === 'infantry').length,
     vehicles: units.filter(u => UNIT_CONFIGS[u.type].category === 'vehicle').length,
-    threatLevel: ti.threatLevel,
+    threatLevel: effectiveThreat(e),
     groundThreats: threats.filter(t => t.category !== 'aircraft').length,
     armorThreats: threats.filter(t => t.category === 'vehicle').length,
     airThreats: air,
@@ -213,6 +235,12 @@ export function analyseBase(e: GameEngine, pending: ConstructionTask[]): BaseSna
     missionNeeds,
     unapproved: new Set(pending.filter(t => !t.approved).map(t => t.type)),
     hqPx,
+    recentLosses: (e.aiArchitect.lossLog ?? []).filter(l => e.gameTime - l.t < 180).map(l => l.type),
+    longRange: e.units.filter(u => u.faction === 'enemy' && u.hp > 0 && UNIT_CONFIGS[u.type].range > 330 && visible(u.x, u.y)).length,
+    recruitEnabled: e.autoProduction.enabled,
+    productionQueued: mine.filter(b => (b.type === 'barracks' || b.type === 'vehicle_factory') && b.constructionProgress >= 1).reduce((n, b) => n + b.productionQueue.length, 0),
+    productionIdle: mine.some(b => (b.type === 'barracks' || b.type === 'vehicle_factory') && b.constructionProgress >= 1)
+      && mine.filter(b => (b.type === 'barracks' || b.type === 'vehicle_factory') && b.constructionProgress >= 1).every(b => b.productionQueue.length === 0),
   };
 }
 
@@ -229,8 +257,9 @@ export function needFor(t: BuildingType, s: BaseSnapshot, st: ConstructionSettin
   const incomeLow = s.incomePerMin < 500 + 300 * production;
   const threatened = s.threatLevel !== 'GREEN';
   const sev = s.threatLevel === 'RED' ? 4 : s.threatLevel === 'ORANGE' ? 2 : s.threatLevel === 'YELLOW' ? 1 : 0;
-  const strat = st.strategy;
+  const strat: ConstructionStrategyId = st.strategy === 'strategic' ? 'adaptive' : st.strategy; // Strategic Planner uses Adaptive's demand model with a stricter bar
   const P = s.power.projectedSurplus;
+  const sr = strat === 'support_recovery';
 
   switch (t) {
     case 'power_plant': {
@@ -248,7 +277,7 @@ export function needFor(t: BuildingType, s: BaseSnapshot, st: ConstructionSettin
     }
     case 'supply_depot': {
       const room = s.popCap - s.pop;
-      if (room <= 6 || s.pop / Math.max(1, s.popCap) > 0.8) return { need: 80, cap: 8, why: `troop capacity is nearly full (${s.pop}/${s.popCap})` };
+      if (room <= (sr ? 10 : 6) || s.pop / Math.max(1, s.popCap) > 0.8) return { need: 80, cap: 8, why: `troop capacity is nearly full (${s.pop}/${s.popCap})` };
       return { need: 0, cap: 8, why: `troop capacity is adequate (${s.pop}/${s.popCap})` };
     }
     case 'barracks': {
@@ -256,14 +285,14 @@ export function needFor(t: BuildingType, s: BaseSnapshot, st: ConstructionSettin
       const bottleneck = s.barracksQueue >= 3 && s.credits > 600;
       const cap = strat === 'army_production' ? 3 : 2;
       if (bottleneck && n < cap) return { need: 55, cap, why: `infantry queues are backed up (${s.barracksQueue.toFixed(1)} per barracks)` };
-      return { need: 0, cap, why: 'existing recruitment capacity is adequate' };
+      return { need: 0, cap, why: s.productionIdle && s.armyUnits < 10 ? `existing production is idle (0 queued, ${s.armyUnits} units): more Barracks would not add troops${s.recruitEnabled ? '' : '; automatic recruitment is off'}` : 'existing Barracks can handle current recruitment demand' };
     }
     case 'vehicle_factory': {
       if (n === 0) return { need: strat === 'army_production' ? 85 : 70, cap: 3, why: 'no vehicle production exists' };
       const bottleneck = s.factoryQueue >= 3 && s.credits > 1000;
       const cap = strat === 'army_production' ? 3 : 2;
       if (bottleneck && n < cap) return { need: 50, cap, why: `vehicle queues are backed up (${s.factoryQueue.toFixed(1)} per factory)` };
-      return { need: 0, cap, why: 'existing vehicle production is adequate' };
+      return { need: 0, cap, why: s.productionIdle && s.vehicles < 4 ? `existing production is idle (0 queued): another War Factory would not add vehicles${s.recruitEnabled ? '' : '; automatic recruitment is off'}` : 'existing vehicle production is adequate' };
     }
     case 'helipad': {
       const wanted = strat === 'army_production' || strat === 'adaptive' || (strat === 'balanced' && s.time > 240 && s.credits > 1200);
@@ -275,12 +304,14 @@ export function needFor(t: BuildingType, s: BaseSnapshot, st: ConstructionSettin
       return { need: 0, cap: 1, why: n > 0 ? 'an airfield already exists' : 'airfield is not justified yet' };
     }
     case 'field_hospital': {
-      if (n === 0 && s.infantry >= 10 && done('barracks') > 0) return { need: 40, cap: 1, why: `${s.infantry} infantry in the field without medical support` };
+      if (n === 0 && s.infantry >= (sr ? 5 : 10) && done('barracks') > 0) return { need: 40, cap: 1, why: `${s.infantry} infantry in the field without medical support` };
       return { need: 0, cap: 1, why: 'medical support is not needed yet' };
     }
     case 'repair_bay': {
-      if (n === 0 && done('vehicle_factory') > 0 && (s.vehicles >= 3 || s.damaged > 0)) return { need: 45, cap: 1, why: s.damaged > 0 ? `${s.damaged} damaged structure(s) and no repair facility` : `${s.vehicles} vehicles with no repair facility` };
-      return { need: 0, cap: 1, why: 'repair facilities are adequate' };
+      const lost = s.recentLosses.length;
+      if (n === 0 && (done('vehicle_factory') > 0 || sr) && (s.vehicles >= 3 || s.damaged > 0 || (sr && (lost > 0 || s.vehicles >= 1)))) return { need: sr ? 70 : 45, cap: sr ? 2 : 1, why: s.damaged > 0 ? `${s.damaged} damaged structure(s) and no repair facility` : lost > 0 ? `${lost} structure(s) lost recently and no repair facility` : `${s.vehicles} vehicles with no repair facility` };
+      if (sr && n === 1 && (s.damaged >= 3 || lost >= 2) && s.credits > 600) return { need: 50, cap: 2, why: `${s.damaged} damaged structures and ${lost} recent losses exceed one repair bay` };
+      return { need: 0, cap: sr ? 2 : 1, why: 'repair facilities are adequate' };
     }
     case 'research_lab': {
       if (n === 0 && done('vehicle_factory') > 0 && s.incomePerMin >= 900 && s.credits > 800) return { need: 40, cap: 1, why: 'income is stable and the factory line is running; technology is affordable' };
@@ -309,11 +340,13 @@ export function needFor(t: BuildingType, s: BaseSnapshot, st: ConstructionSettin
         return { need: 0, cap: 0, why: `ground defense is adequate (${groundTotal} turrets, ${Math.round(coverage * 100)}% coverage)` };
       }
       // choose the turret type that matches the actual threat
-      const armored = s.armorThreats >= 2 || s.threatLevel === 'RED';
+      const armored = s.armorThreats >= 2 || s.threatLevel === 'RED' || s.longRange > 0;
+      const dir = compass(s.approachAngles[0] ?? 0);
+      const what = s.longRange > 0 ? 'long-range enemy fire' : s.armorThreats >= 2 ? 'enemy armor' : 'enemy ground forces';
       const per = t === 'turret_gun' ? Math.max(1, Math.ceil(wanted / 2)) : t === 'turret_missile' ? Math.floor(wanted / 3) + (armored ? 1 : 0) : armored ? Math.floor(wanted / 4) + (s.threatLevel === 'RED' ? 1 : 0) : 0;
       if (n >= per) return { need: 0, cap: per, why: `${n}/${per} of this turret type already cover the current ground threat` };
       const mix = t === 'turret_gun' ? 1 : armored ? 1.2 : 0.7;
-      return { need: Math.round((35 + 55 * (1 - coverage) + sev * 6) * mix), cap: per, why: `${Math.round(coverage * 100)}% ground coverage with ${s.threatLevel} threat${armored ? ' (armor)' : ''}` };
+      return { need: Math.round((35 + 55 * (1 - coverage) + sev * 6) * mix), cap: per, why: threatened ? `${what} detected on the ${dir} approach; only ${Math.round(coverage * 100)}% of key structures are covered (threat ${s.threatLevel})` : `${Math.round(coverage * 100)}% ground coverage with ${s.threatLevel} threat` };
     }
     case 'defense_wall':
       return { need: 0, cap: 0, why: 'walls are not built automatically because they can block troop movement' };
@@ -333,7 +366,21 @@ export interface CandidateEval {
   reason: string;
   prerequisiteFor?: BuildingType; // this pick is a prerequisite of another wanted building
   requiresApproval?: boolean;     // violates the strategy focus: needs the player's approval even in AUTO
+  tier: number;                   // budget priority: 1 imminent loss, 2 essential infrastructure, 3 sustain, 4 military, 5 expansion
 }
+
+/** Budget priority of a building given the current situation (see aiBudget.ts). */
+export function tierFor(t: BuildingType, s: BaseSnapshot): number {
+  const sev = s.threatLevel === 'RED' ? 4 : s.threatLevel === 'ORANGE' ? 2 : s.threatLevel === 'YELLOW' ? 1 : 0;
+  const roles = BUILDING_ROLES[t];
+  if (roles.includes('DEFENSE') && t !== 'repair_bay' && t !== 'radar_station') return sev >= 2 && s.groundCoverage < 0.5 ? 1 : 4;
+  if (t === 'power_plant') return s.power.projectedSurplus < 0 || s.recentLosses.includes('power_plant') ? 2 : 3;
+  if (t === 'repair_bay' || t === 'field_hospital') return s.damaged > 0 || s.recentLosses.length > 0 ? 2 : 4;
+  if (t === 'coin_generator' || t === 'supply_depot') return 3;
+  if (t === 'barracks' || t === 'vehicle_factory' || t === 'radar_station') return 4;
+  return 5;
+}
+
 
 const ALL_TYPES = (Object.keys(BUILDING_CONFIGS) as BuildingType[]).filter(t => t !== 'headquarters');
 
@@ -344,6 +391,8 @@ const ESSENTIAL_SUPPORT: Record<ConstructionStrategyId, BuildingType[]> = {
   defense_only: ['power_plant'],
   army_production: ['power_plant', 'coin_generator', 'supply_depot'],
   economy: [],
+  support_recovery: [],
+  strategic: [],
 };
 
 function roleAllowed(t: BuildingType, st: ConstructionSettings): boolean {
@@ -352,7 +401,10 @@ function roleAllowed(t: BuildingType, st: ConstructionSettings): boolean {
   switch (st.strategy) {
     case 'balanced':
     case 'adaptive':
+    case 'strategic':
       return true;
+    case 'support_recovery':
+      return has('SUPPORT') || has('POWER') || has('LOGISTICS') || (st.prioritizeDefense && has('DEFENSE'));
     case 'defense_only':
       return has('DEFENSE');
     case 'army_production':
@@ -368,6 +420,8 @@ function roleWeight(t: BuildingType, st: ConstructionSettings): number {
   if (st.strategy === 'balanced') w = roles.includes('POWER') ? 1.2 : roles.includes('DEFENSE') ? 0.9 : roles.includes('TECHNOLOGY') || roles.includes('SUPPORT') ? 0.75 : 1;
   if (st.strategy === 'defense_only') w = 1.2;
   if (st.strategy === 'army_production') w = roles.includes('ARMY_PRODUCTION') ? 1.35 : 0.8;
+  if (st.strategy === 'support_recovery') w = roles.includes('SUPPORT') ? 1.4 : roles.includes('POWER') ? 1.2 : 1;
+  if (st.strategy === 'strategic') w = roles.includes('POWER') ? 1.1 : 1;
   if (st.strategy === 'economy') w = roles.includes('ECONOMY') || roles.includes('LOGISTICS') ? 1.3 : 1;
   if (st.prioritizeDefense && roles.includes('DEFENSE')) w += 0.25;
   return w;
@@ -397,13 +451,16 @@ function missingPrerequisite(t: BuildingType, s: BaseSnapshot): { missing: Build
 export function evaluateCandidates(e: GameEngine, s: BaseSnapshot, st: ConstructionSettings, lastPlanned: Record<string, number>): CandidateEval[] {
   const out: CandidateEval[] = [];
   let powerBlocked: { type: BuildingType; need: number } | null = null; // best wanted building that only power is stopping
-  const reject = (type: BuildingType, reason: string, need = 0): void => { out.push({ type, verdict: 'rejected', score: 0, need, count: s.total(type), reason }); };
+  const reject = (type: BuildingType, reason: string, need = 0): void => { out.push({ type, verdict: 'rejected', score: 0, need, count: s.total(type), reason, tier: tierFor(type, s) }); };
 
   for (const t of ALL_TYPES) {
     const nm = name(t);
     const missionReq = s.missionNeeds.has(t) && s.total(t) === 0;
     const limit = st.typeLimits[t];
     if (!missionReq && limit !== undefined && s.total(t) >= limit) { reject(t, `your limit for ${nm} is ${limit}`); continue; }
+
+    const rejUntil = st.rejected[t];
+    if (rejUntil !== undefined && rejUntil > s.time) { reject(t, `you rejected this suggestion; not proposed again for ${Math.ceil(rejUntil - s.time)} s`); continue; }
 
     const nd = needFor(t, s, st);
     const need = missionReq ? Math.max(nd.need, 95) : nd.need;
@@ -437,6 +494,8 @@ export function evaluateCandidates(e: GameEngine, s: BaseSnapshot, st: Construct
       // A prerequisite outside the strategy's focus is never built silently: only the support policy (essential power etc.) can waive approval.
       const waived = roleAllowed(pre.missing, st) || (ESSENTIAL_SUPPORT[st.strategy].includes(pre.missing) && st.allowPrerequisites);
       requiresApproval = !waived && !missionReq;
+      const preRej = st.rejected[pick];
+      if (preRej !== undefined && preRej > s.time) { reject(t, `needs ${name(pick)}, which you rejected recently`, need); continue; }
       const preLimit = st.typeLimits[pick];
       if (!missionReq && preLimit !== undefined && s.total(pick) >= preLimit) { reject(t, `needs ${name(pick)}, but your limit for it is ${preLimit}`, need); continue; }
       if (s.time - (lastPlanned[pick] ?? -999) < cooldownFor(pick)) { reject(t, `needs ${name(pick)} first (recently planned)`, need); continue; }
@@ -460,9 +519,11 @@ export function evaluateCandidates(e: GameEngine, s: BaseSnapshot, st: Construct
     if (missionReq) score += 20;
     if (BUILDING_ROLES[t].includes('DEFENSE') && st.prioritizeDefense) score += 15;
     if (prerequisiteFor) score *= 0.9; // a prerequisite is slightly less urgent than the thing that needs it
-    if (score < MIN_SCORE) { reject(t, `priority too low (${Math.round(score)}): ${why}`, need); continue; }
+    let reasonText = why;
+    if (s.recentLosses.includes(t)) { score += 15; reasonText = `rebuilding after a recent loss: ${why}`; }
+    if (score < minScoreFor(st)) { reject(t, `priority too low (${Math.round(score)}): ${why}`, need); continue; }
 
-    out.push({ type: pick, verdict: 'chosen', score: Math.round(score), need, count: s.total(pick), reason: prerequisiteFor ? `${name(pick)} is required for ${name(prerequisiteFor)} (${why})` : why, prerequisiteFor, requiresApproval });
+    out.push({ type: pick, verdict: 'chosen', score: Math.round(score), need, count: s.total(pick), reason: prerequisiteFor ? `${name(pick)} is required for ${name(prerequisiteFor)} (${why})` : reasonText, prerequisiteFor, requiresApproval, tier: tierFor(pick, s) });
   }
 
   // A wanted building blocked only by power is a reason to build power (otherwise the planner would deadlock
@@ -477,6 +538,7 @@ export function evaluateCandidates(e: GameEngine, s: BaseSnapshot, st: Construct
         type: pp, verdict: 'chosen', score: Math.round(powerBlocked.need * 0.95), need: powerBlocked.need, count: s.total(pp),
         reason: `${name(powerBlocked.type)} is wanted but the grid cannot carry it yet`,
         requiresApproval: !roleAllowed(pp, st) && !st.allowPrerequisites,
+        tier: 2,
       });
     }
   }
@@ -484,7 +546,7 @@ export function evaluateCandidates(e: GameEngine, s: BaseSnapshot, st: Construct
   // one entry per picked type (a prerequisite may be requested by several wanted buildings): keep the best
   const best = new Map<BuildingType, CandidateEval>();
   for (const c of out.filter(x => x.verdict === 'chosen')) { const prev = best.get(c.type); if (!prev || c.score > prev.score) best.set(c.type, c); }
-  const chosen = [...best.values()].sort((a, b) => b.score - a.score);
+  const chosen = [...best.values()].sort((a, b) => Math.min(a.tier, 3) - Math.min(b.tier, 3) || b.score - a.score);
   const rejected = out.filter(x => x.verdict === 'rejected').sort((a, b) => b.need - a.need);
   return [...chosen, ...rejected];
 }

@@ -114,3 +114,50 @@ raids do not end the match mid-test.
 - The default limit of 5 applies to new games; cancelling a running project refunds 50% (existing demolish rule).
 - Scores are hand-tuned heuristics validated in simulations, not a learned model; not tested on a physical device.
 - Tag `baseline-aistudio-original` could not be pushed to the remote (baseline is reachable by commit d456d60).
+
+---
+
+# V8.2 — Supreme AI Base Commander
+
+## One-tap Select All Troops
+The top-HUD troop counter (`6/65 Troops`) now selects every living friendly unit on tap (long-press still opens the capacity
+details). It uses the engine's existing `selectAllUnits()` (one linear pass, run only on tap, never per render): enemy units,
+buildings, destroyed units and units still in a production queue are never included, units anywhere on the map are, and the
+camera does not move. The selected-units panel shows the real selected count (which can differ from the population value),
+the existing group commands, and new filters: Select All · Idle · Combat · Infantry · Vehicles · Aircraft · Clear Selection
+(existing unit categories only; `selectCombatUnits` / `clearSelection` were added). Population maths is untouched.
+
+## Construction AI changes (`constructionStrategy.ts`, `constructionAI.ts`, new `aiBudget.ts`)
+- **New strategies:** *Support & Recovery* (repair bays, medical, power, depots; rebuilds what was lost; no army/economy) and
+  *Strategic Planner* (Adaptive's demand model with a stricter score bar of 35, producing a prioritised plan).
+- **Situation inputs added to the snapshot:** recent losses (3 min), visible long-range enemies, recruitment on/off, queued
+  units and idle production. Messages like "existing production is idle (0 queued, 5 units): more Barracks would not add
+  troops" and "enemy armor detected on the east approach; only 0% of key structures are covered" come from these values.
+- **Shared planning budget** (`aiBudget.ts`): one credit pool (the engine economy), five tiers — 1 imminent loss (may use the
+  emergency reserve), 2 essential infrastructure, 3 sustainable power/income, 4 military capability, 5 expansion. Tier ≥3 leaves
+  money held for an urgent defense when the base is threatened and uncovered; tier ≥4 leaves a recruitment floor when automatic
+  recruitment is running and the army is below target. Projects start in tier order; a held project says why.
+- **Replanning:** event-driven (building completed/destroyed, project finished/failed/cancelled, power flips, threat change,
+  credits doubling/halving, strategy/option change, objective change, blocked queue) with an 8 s periodic fallback and a
+  1 s minimum interval. Threat uses 20 s hysteresis so priorities do not flicker.
+- **Player control:** reject a proposal (not re-proposed for 5 min), per-building max count (0 = excluded), lock existing
+  structures (the AI never cancels/demolishes them), pause/resume, Recalculate Plan, Building priorities (the real ranked
+  plan), Explain decision (real evaluation text). Manual placement always wins: a reserved site that the player builds on is
+  re-planned.
+- **Persistence:** `schemaVersion` 82, rejections, locks, loss log, threat memo, tasks and reservations are saved with the
+  game; older saves get safe defaults and nothing is built twice after loading.
+
+## Tests
+`tests/supreme-commander-v82.test.ts` (29) plus the earlier suites: selection (count, exclusions, dynamic updates, far
+units, filters, commands, 1500-unit cost), strategies, Scenarios A–E, budget tiers, hysteresis, event/periodic planning,
+rejection/limits/locks/manual priority, production-exit clearance, save/load and old-save upgrade.
+Browser: `tests/e2e/select-troops.cjs`, `tests/e2e/construction-ai.cjs` (three viewports).
+
+## Remaining limitations
+- Anti-air/long-range answers use real visible units and the game's own threat list, so fog of war limits what the AI can see.
+  Counter-artillery means turret type choice and placement toward the threat; the game has no dedicated counter-battery building.
+- "Defensive bunker/artillery" buildings do not exist in this catalog, so only existing turrets are used.
+- Lock protects against AI cancel/demolish only; it does not stop enemy damage.
+- Support & Recovery never builds refineries or turrets unless "prioritize base defense" is on.
+- Zones (command/economic/production/defense/support) are expressed as placement scoring (protected side, grouping, spread,
+  exit clearance), not fixed rectangles. Not tested on a physical phone.

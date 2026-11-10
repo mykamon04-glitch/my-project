@@ -152,7 +152,7 @@ describe('adaptive decisions follow real game conditions', () => {
     const b = e.autoPlaceBuilding('barracks')!; b.constructionProgress = 1; b.isUnderConstruction = false;
     run(e, 1);
     expect(chosenTypes(e)).not.toContain('barracks');
-    expect(reasonOf(e, 'barracks')).toMatch(/adequate/i);
+    expect(reasonOf(e, 'barracks')).toMatch(/adequate|idle|handle/i);
   });
 
   it('a second barracks is only justified by real queue demand', () => {

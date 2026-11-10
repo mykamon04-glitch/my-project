@@ -1627,6 +1627,15 @@ export default function App() {
                 <MobileTopHUD
                   engine={engine}
                   onOpenSettings={() => setIsSettingsOpen(true)}
+                  onSelectAllTroops={() => {
+                    const ids = engine.selectAllUnits();
+                    selectedUnitIdsRef.current = ids;
+                    setSelectedUnitIds(ids);
+                    engine.buildings.forEach(b => (b.selected = false));
+                    setSelectedBuildingId(null);
+                    if (ids.length > 0) soundEngine.playSelectUnit();
+                    else soundEngine.playError();
+                  }}
                   onOpenSaveLoad={() => setIsSaveLoadOpen(true)}
                   onOpenAdvisor={() => setIsAdvisorOpen(true)}
                   onCenterHQ={handleCenterHQ}
@@ -1936,6 +1945,19 @@ export default function App() {
                     setSelectedUnitIds(ids);
                     setSelectedBuildingId(null);
                     soundEngine.playSelectUnit();
+                  }}
+                  onSelectCombatUnits={() => {
+                    const ids = engine.selectCombatUnits();
+                    selectedUnitIdsRef.current = ids;
+                    setSelectedUnitIds(ids);
+                    setSelectedBuildingId(null);
+                    soundEngine.playSelectUnit();
+                  }}
+                  onClearSelection={() => {
+                    const ids = engine.clearSelection();
+                    selectedUnitIdsRef.current = ids;
+                    setSelectedUnitIds(ids);
+                    setSelectedBuildingId(null);
                   }}
                   onSelectDamagedUnits={() => {
                     const ids = engine.selectDamagedUnits();

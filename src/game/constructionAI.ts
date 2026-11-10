@@ -5,7 +5,8 @@
 
 import { BUILDING_CONFIGS } from '../data/gameData';
 import type { GameEngine } from './engine';
-import { analyseBase, evaluateCandidates, pickSite, settingsOf, BUILDING_ROLES, STRATEGIES, DEFAULT_SETTINGS, CandidateEval } from './constructionStrategy';
+import { analyseBase, evaluateCandidates, pickSite, settingsOf, BUILDING_ROLES, STRATEGIES, DEFAULT_SETTINGS, CandidateEval, effectiveThreat } from './constructionStrategy';
+import { planningBudget } from './aiBudget';
 import { AIArchitectDecision, Building, BuildingType, ConstructionLogEntry, ConstructionStrategyId, ConstructionTask } from '../types/game';
 
 /**
@@ -18,6 +19,9 @@ import { AIArchitectDecision, Building, BuildingType, ConstructionLogEntry, Cons
  */
 
 export const MAX_SLOTS = 5;
+export const SCHEMA_VERSION = 82;  // construction AI save schema (V8.2); missing/older values are upgraded in ensureArchitectState
+const REPLAN_PERIODIC_S = 8;     // fallback re-evaluation when no event happened
+const REJECT_COOLDOWN_S = 300;   // a rejected suggestion is not proposed again for this long
 const PLAN_INTERVAL_S = 1.0;      // a planning cycle runs at most once per game-second
 const MAX_SITE_RETRIES = 3;       // re-plans of a project whose site went invalid before it fails
 const BLOCK_COOLDOWN_S = 30;      // a building type with no valid site is not retried for this long
@@ -44,6 +48,11 @@ export function ensureArchitectState(e: GameEngine): void {
   if (!a.typeLimits) a.typeLimits = {};
   if (!Array.isArray(a.decisionLog)) a.decisionLog = [];
   if (!a.lastPlanned) a.lastPlanned = {};
+  // V8.2: restrictions, locks and loss history; older saves get safe defaults
+  if (!a.rejected) a.rejected = {};
+  if (!Array.isArray(a.lockedBuildingIds)) a.lockedBuildingIds = [];
+  if (!Array.isArray(a.lossLog)) a.lossLog = [];
+  a.schemaVersion = SCHEMA_VERSION;
 }
 
 // ───────────────────────── decision log (bounded, event-based) ─────────────────────────
@@ -140,6 +149,7 @@ function finish(e: GameEngine, t: ConstructionTask, status: 'completed' | 'faile
   t.finishedAt = e.gameTime;
   if (note) t.note = note;
   a.tasks = a.tasks!.filter(x => x.id !== t.id);
+  a.planDirty = true; // a completed / failed / cancelled project is a reason to re-plan
   a.taskHistory!.unshift({ ...t });
   if (status === 'completed') logEvent(e, 'done', `Completed ${BUILDING_CONFIGS[t.type].name}.`, t.type);
   else if (status === 'failed') logEvent(e, 'info', `${BUILDING_CONFIGS[t.type].name} failed: ${note ?? 'unknown reason'}.`, t.type);
@@ -246,7 +256,7 @@ function createTask(
   e: GameEngine,
   type: BuildingType,
   site: { x: number; y: number },
-  o: { reason: string; approved: boolean; requiresApproval?: boolean; prerequisiteFor?: BuildingType; score?: number }
+  o: { reason: string; approved: boolean; requiresApproval?: boolean; prerequisiteFor?: BuildingType; score?: number; tier?: number }
 ): ConstructionTask {
   const a = e.aiArchitect;
   const task: ConstructionTask = {
@@ -262,6 +272,7 @@ function createTask(
     requiresApproval: o.requiresApproval || undefined,
     prerequisiteFor: o.prerequisiteFor,
     score: o.score,
+    tier: o.tier,
     cost: BUILDING_CONFIGS[type].cost,
     charged: false,
     createdAt: e.gameTime,
@@ -305,8 +316,17 @@ function planOne(e: GameEngine): boolean {
   const chosen = ranked.filter(c => c.verdict === 'chosen');
   explain(e, ranked, chosen, active.length);
 
+  const budget = planningBudget(e, active.filter(isPending));
+  let held = false;
   for (const c of chosen.slice(0, 4)) {
     if (isBlocked(e, c.type)) continue;
+    // shared budget: a project whose tier may not touch the held credits is not started now (it is not piled up either)
+    const cost = BUILDING_CONFIGS[c.type].cost;
+    if (c.tier >= 3 && budget.spendable(c.tier) - budget.committed < cost) {
+      held = true;
+      logOnChange(e, 'delay', c.type, `Delaying ${BUILDING_CONFIGS[c.type].name}: ${budget.notes.length ? `construction paused to preserve ${budget.notes[0].replace(/^\$\d+ /, '')}` : 'insufficient credits'}.`);
+      continue;
+    }
     const site = findSite(e, c.type);
     if (!site) {
       a.blockedTypes![c.type] = e.gameTime + BLOCK_COOLDOWN_S;
@@ -322,6 +342,7 @@ function planOne(e: GameEngine): boolean {
       requiresApproval: c.requiresApproval,
       prerequisiteFor: c.prerequisiteFor,
       score: c.score,
+      tier: c.tier,
     });
     if (c.requiresApproval) {
       logEvent(e, 'approval', `Approval needed: ${cfg.name} — ${c.reason}. The ${STRATEGIES.find(x => x.id === st.strategy)!.label} strategy would not build it on its own.`, c.type);
@@ -347,7 +368,10 @@ function explain(e: GameEngine, ranked: CandidateEval[], chosen: CandidateEval[]
   const core: BuildingType[] = ['barracks', 'vehicle_factory', 'coin_generator', 'power_plant', 'supply_depot'];
   for (const t of core) {
     const r = rejected.find(x => x.type === t && x.need === 0 && x.count > 0);
-    if (r && logOnChange(e, 'skip', t, `Skipping ${BUILDING_CONFIGS[t].name}: ${cap(r.reason)}.`)) break; // at most one per cycle
+    const text = t === 'power_plant' && /^power is adequate/.test(r?.reason ?? '') ? 'Power generation is sufficient. No additional generator needed.'
+      : t === 'barracks' && /can handle/.test(r?.reason ?? '') ? 'Existing Barracks can handle current recruitment demand.'
+      : `Skipping ${BUILDING_CONFIGS[t].name}: ${cap(r?.reason ?? '')}.`;
+    if (r && logOnChange(e, 'skip', t, text)) break; // at most one per cycle
   }
   if (!chosen.length) {
     logOnChange(e, 'idle', 'headquarters', activeCount === 0 ? 'No construction needed: every essential system is adequate.' : 'No further construction needed while current projects finish.');
@@ -358,14 +382,18 @@ function explain(e: GameEngine, ranked: CandidateEval[], chosen: CandidateEval[]
 function startReady(e: GameEngine): void {
   const a = e.aiArchitect;
   const reserve = effectiveReserve(e);
+  const budget = planningBudget(e, a.tasks!.filter(isPending));
   let committed = 0;
-  const queue = a.tasks!.filter(t => isPending(t) && t.approved).sort((x, y) => x.slot - y.slot);
+  const queue = a.tasks!.filter(t => isPending(t) && t.approved).sort((x, y) => (x.tier ?? 3) - (y.tier ?? 3) || x.slot - y.slot);
   for (const t of queue) {
     if (t.charged) continue; // never charge twice
-    const available = e.economy.credits - reserve - committed;
+    const available = budget.spendable(t.tier ?? 3) - committed;
     if (available < t.cost) {
       if (t.status !== 'waiting_resources') {
-        logOnChange(e, 'delay', t.type, `Delaying ${BUILDING_CONFIGS[t.type].name}: insufficient credits ($${Math.floor(e.economy.credits)} available, $${t.cost} needed plus $${Math.round(reserve)} reserve).`);
+        const heldBack = e.economy.credits - committed >= t.cost + reserve && budget.notes.length > 0;
+        logOnChange(e, 'delay', t.type, heldBack
+          ? `Delaying ${BUILDING_CONFIGS[t.type].name}: construction paused to preserve ${budget.notes.find(n => /urgent|recruit/.test(n))?.replace(/^\$\d+ /, '') ?? 'emergency credits'}.`
+          : `Delaying ${BUILDING_CONFIGS[t.type].name}: insufficient credits ($${Math.floor(e.economy.credits)} available, $${t.cost} needed plus $${Math.round(reserve)} reserve).`);
       }
       t.status = 'waiting_resources'; // wait; no placement attempts until it is affordable
       committed += t.cost;
@@ -412,14 +440,22 @@ export function planAndStartConstruction(e: GameEngine): void {
     }
   }
 
-  // 2) planning cycle: fill free slots, one project at a time. After each plan, affordability is re-checked so
-  //    projects that cannot be paid for wait (and reserve their credits) instead of piling up.
-  if (e.gameTime - (a.lastPlanTime ?? -999) >= PLAN_INTERVAL_S) {
+  // 2) planning cycle (event-driven with a periodic fallback, never per rendered frame): fill free slots, one project at
+  //    a time. After each plan, affordability is re-checked so projects that cannot be paid for wait (and reserve their
+  //    credits) instead of piling up.
+  trackSignals(e);
+  const since = e.gameTime - (a.lastPlanTime ?? -999);
+  if (since >= PLAN_INTERVAL_S && (a.planDirty || since >= REPLAN_PERIODIC_S)) {
     a.lastPlanTime = e.gameTime;
+    a.planDirty = false;
+    let committed = 0;
     for (let i = 0; i < MAX_SLOTS; i++) {
       if (!planOne(e)) break;
+      committed++;
       startReady(e);
     }
+    if (committed > 0) a.planDirty = true; // the base changed by our own decision: re-evaluate soon (bounded by PLAN_INTERVAL_S)
+    reportEmptySlots(e);
   }
 
   // 3) start whatever is approved and affordable
@@ -461,6 +497,7 @@ export function cancelTask(e: GameEngine, id: string): boolean {
   ensureArchitectState(e);
   const t = e.aiArchitect.tasks!.find(x => x.id === id);
   if (!t || !isActive(t)) return false;
+  if (t.buildingId && e.aiArchitect.lockedBuildingIds!.includes(t.buildingId)) return false; // locked structures are never cancelled
   if (t.status === 'constructing' && t.buildingId) {
     const b = e.buildings.find(x => x.id === t.buildingId);
     if (b && b.constructionProgress < 1) e.demolishBuilding(b.id);
@@ -487,6 +524,115 @@ export function setConstructionMode(e: GameEngine, mode: 'off' | 'suggest' | 'au
     for (const t of a.tasks!.filter(x => isPending(x) && !x.approved && !x.requiresApproval)) t.approved = true; // AUTO manages them itself (strategy-violating ones still need the player)
   }
   syncConstructionTasks(e);
+}
+
+// ───────────────────────── V8.2: signals, replanning, overrides, explanations ─────────────────────────
+
+/** Event detection: any meaningful change of the situation marks the plan dirty (cheap integer signature, no allocation of plans). */
+function trackSignals(e: GameEngine): void {
+  const a = e.aiArchitect;
+  const ti = e.tacticalIntelligence;
+  const rank = ['GREEN', 'YELLOW', 'ORANGE', 'RED'];
+  if (!a.threatMemo || rank.indexOf(ti.threatLevel) >= rank.indexOf(a.threatMemo.level) || e.gameTime - a.threatMemo.t >= 20) {
+    if (!a.threatMemo || a.threatMemo.level !== ti.threatLevel) a.threatMemo = { level: ti.threatLevel, t: e.gameTime };
+    else if (rank.indexOf(ti.threatLevel) >= rank.indexOf(a.threatMemo.level)) a.threatMemo.t = e.gameTime;
+  }
+  const done = e.buildings.filter(b => b.faction === 'player' && b.constructionProgress >= 1).length;
+  const objectives = (e.currentMission?.objectives ?? []).filter(o => o.completed).length;
+  const room = e.economy.populationCap - e.economy.population;
+  const sig = [
+    effectiveThreat(e),
+    e.economy.powerSupply < e.economy.powerDemand ? 'P-' : 'P+',
+    Math.floor(Math.log2(Math.max(1, e.economy.credits))),   // credits changing by a factor of ~2
+    done, objectives, room <= 6 ? 'cap' : 'room',
+    a.strategy, e.autoProduction.enabled ? 'rec' : 'norec',
+    e.buildings.some(b => b.faction === 'player' && (b.type === 'barracks' || b.type === 'vehicle_factory') && b.productionQueue.length >= 4) ? 'blocked' : 'free',
+  ].join('|');
+  if (a.planSignature !== sig) {
+    if (a.planSignature !== undefined) a.planDirty = true;
+    a.planSignature = sig;
+  }
+}
+
+/** After a planning cycle: say plainly when only some slots are useful. */
+function reportEmptySlots(e: GameEngine): void {
+  const a = e.aiArchitect;
+  const act = a.tasks!.filter(isActive).length;
+  const limit = getLimit(e);
+  if (act > 0 && act < limit) {
+    logOnChange(e, 'idle', 'headquarters', `Only ${act} useful construction project${act === 1 ? '' : 's'} identified. ${limit - act} slot${limit - act === 1 ? '' : 's'} remain empty.`);
+  }
+}
+
+/** "Recalculate Plan": drop transient blocks and plan again right now. Running and approved projects are untouched. */
+export function recalculatePlan(e: GameEngine): void {
+  ensureArchitectState(e);
+  const a = e.aiArchitect;
+  a.blockedTypes = {};
+  a.planDirty = true;
+  a.lastPlanTime = -999;
+  logEvent(e, 'info', 'Plan recalculated on request.');
+  if (getConstructionMode(e) !== 'off' && !a.isPaused) planAndStartConstruction(e);
+}
+
+/** Reject a proposal: it is cancelled and the same building is not suggested again for a while. */
+export function rejectTask(e: GameEngine, id: string): boolean {
+  ensureArchitectState(e);
+  const t = e.aiArchitect.tasks!.find(x => x.id === id);
+  if (!t || !isPending(t)) return false;
+  e.aiArchitect.rejected![t.type] = e.gameTime + REJECT_COOLDOWN_S;
+  finish(e, t, 'cancelled', 'Rejected by commander');
+  logEvent(e, 'info', `You rejected ${BUILDING_CONFIGS[t.type].name}; it will not be proposed again for ${Math.round(REJECT_COOLDOWN_S / 60)} minutes.`, t.type);
+  syncLegacyRecommendation(e);
+  return true;
+}
+
+/** Lock / unlock a structure: the Construction AI will never cancel or demolish a locked building. */
+export function lockBuilding(e: GameEngine, buildingId: string, locked: boolean): void {
+  ensureArchitectState(e);
+  const ids = e.aiArchitect.lockedBuildingIds!;
+  const i = ids.indexOf(buildingId);
+  if (locked && i < 0) ids.push(buildingId);
+  if (!locked && i >= 0) ids.splice(i, 1);
+}
+export const isLocked = (e: GameEngine, buildingId: string) => (e.aiArchitect.lockedBuildingIds ?? []).includes(buildingId);
+
+/** The current prioritised plan (what the AI would build, in order) plus what it rejected and why. Real evaluation, not text. */
+export function getPlan(e: GameEngine): { chosen: CandidateEval[]; rejected: CandidateEval[] } {
+  ensureArchitectState(e);
+  const pending = e.aiArchitect.tasks!.filter(isPending);
+  const ranked = evaluateCandidates(e, analyseBase(e, pending), settingsOf(e), e.aiArchitect.lastPlanned!);
+  return { chosen: ranked.filter(c => c.verdict === 'chosen'), rejected: ranked.filter(c => c.verdict === 'rejected') };
+}
+
+/** Budget numbers for the dashboard. */
+export function getBudgetView(e: GameEngine) {
+  ensureArchitectState(e);
+  const b = planningBudget(e, e.aiArchitect.tasks!.filter(isPending));
+  return { credits: b.credits, reserve: b.reserve, urgentHold: b.urgentHold, recruitFloor: b.recruitFloor, committed: b.committed, notes: b.notes };
+}
+
+/** Plain-language account of the latest evaluation. Every line comes from a real gate/score result. */
+export function explainDecision(e: GameEngine): string[] {
+  ensureArchitectState(e);
+  const { chosen, rejected } = getPlan(e);
+  const out: string[] = [];
+  const nm = (t: BuildingType) => BUILDING_CONFIGS[t].name;
+  const budget = getBudgetView(e);
+  const act = e.aiArchitect.tasks!.filter(isActive);
+  if (act.length) out.push(`Active: ${act.map(t => `${nm(t.type)} (${t.reason})`).join('; ')}.`);
+  if (chosen.length) {
+    for (const c of chosen.slice(0, 3)) out.push(`Wanted next: ${nm(c.type)} - ${c.reason} (priority ${c.score}, tier ${c.tier}).`);
+  } else {
+    out.push('Nothing new is needed: every essential system is adequate. Credits are being saved.');
+  }
+  for (const r of rejected.filter(x => x.need > 0).slice(0, 2)) out.push(`Not ${nm(r.type)}: ${r.reason}.`);
+  for (const t of ['power_plant', 'barracks', 'coin_generator'] as BuildingType[]) {
+    const r = rejected.find(x => x.type === t && x.need === 0);
+    if (r) out.push(t === 'power_plant' ? `Power generation: ${r.reason}. No additional generator needed.` : `${nm(t)}: ${cap(r.reason)}.`);
+  }
+  if (budget.notes.length) out.push(`Budget: ${budget.notes.join('; ')}.`);
+  return out;
 }
 
 export function setConstructionLimit(e: GameEngine, n: number): number {
@@ -564,18 +710,21 @@ export function setStrategy(e: GameEngine, strategy: ConstructionStrategyId): vo
 export function setOption(e: GameEngine, key: 'avoidDuplicates' | 'allowPrerequisites' | 'prioritizeDefense', value: boolean): void {
   ensureArchitectState(e);
   e.aiArchitect[key] = value;
+  e.aiArchitect.planDirty = true;
 }
 
 /** Player restriction: at most `n` of this building (0 = never). Mission-required buildings are never blocked by it. */
 export function setTypeLimit(e: GameEngine, type: BuildingType, n: number | undefined): void {
   ensureArchitectState(e);
   const limits = e.aiArchitect.typeLimits!;
+  e.aiArchitect.planDirty = true;
   if (n === undefined || !Number.isFinite(n)) delete limits[type];
   else limits[type] = Math.max(0, Math.round(n));
 }
 
 /** Emergency credits the AI never spends (uses the existing reserve setting). */
 export function setEmergencyReserve(e: GameEngine, credits: number): void {
+  e.aiArchitect.planDirty = true;
   e.aiArchitect.reserveCredits = Math.max(0, Math.min(5000, Math.round(credits)));
 }
 

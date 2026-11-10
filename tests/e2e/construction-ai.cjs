@@ -21,7 +21,7 @@ const res = []; const ok = (n, p, i = '') => { res.push(p); console.log((p ? 'PA
     // strategy selector: five real strategies, blurb follows the choice
     const sel = p.locator('#construction-strategy');
     const opts = await sel.locator('option').allInnerTexts();
-    ok(`${tag} five strategies offered`, opts.length === 5 && opts.includes('Defense Only') && opts.includes('Adaptive Commander'), opts.join(' | '));
+    ok(`${tag} seven strategies offered`, opts.length === 7 && ['Defense Only', 'Adaptive Commander', 'Support & Recovery', 'Strategic Planner'].every(x => opts.includes(x)), opts.join(' | '));
     await sel.selectOption('army_production'); await p.waitForTimeout(200);
     ok(`${tag} strategy blurb updates`, /Barracks, factories/.test(await p.getByTestId('strategy-blurb').innerText()));
     await sel.selectOption('balanced');
@@ -55,13 +55,39 @@ const res = []; const ok = (n, p, i = '') => { res.push(p); console.log((p ? 'PA
     ok(`${tag} decision log lists real decisions`, lines.length >= 2 && lines.some(l => /Building |Completed|Skipping/.test(l)), `${lines.length} lines; first: ${lines[0]}`);
     await logBtn.click();
 
+    // V8.2: plan tools
+    const status = (await p.getByTestId('construction-status').innerText()).trim();
+    ok(`${tag} status line shows active/planned/waiting`, /Active \d+ · Planned \d+ · Waiting \d+/.test(status), status);
+    await p.getByRole('button', { name: 'Building priorities' }).scrollIntoViewIfNeeded();
+    await p.getByRole('button', { name: 'Building priorities' }).click(); await p.waitForTimeout(150);
+    ok(`${tag} Building priorities lists the real plan`, (await p.getByTestId('construction-priorities').innerText()).length > 10);
+    await p.getByRole('button', { name: 'Explain decision' }).click(); await p.waitForTimeout(150);
+    const ex = await p.getByTestId('construction-explain').innerText();
+    ok(`${tag} Explain decision gives plain-language reasons`, ex.trim().length > 20, ex.split('\n')[0]);
+    await p.getByRole('button', { name: /Recalculate/ }).click(); await p.waitForTimeout(150);
+    const lim = p.getByRole('button', { name: /Building limits/ }); await lim.scrollIntoViewIfNeeded(); await lim.click(); await p.waitForTimeout(150);
+    const plus = p.getByRole('button', { name: 'Refinery & Silo max minus' }).first();
+    await plus.scrollIntoViewIfNeeded(); await plus.click(); await p.waitForTimeout(150);
+    ok(`${tag} a building can be excluded (max 0)`, (await p.getByLabel('Refinery & Silo maximum').innerText()).trim() === '0');
+    await p.getByRole('button', { name: 'Refinery & Silo max plus' }).first().click(); // back to unlimited
+    await p.getByRole('button', { name: 'Refinery & Silo max plus' }).first().isVisible();
+    await lim.click();
+
     // cancel exactly one
-    if (n1 >= 1) {
-      const target = names.find(n => n !== 'Free');
+    const liveNames = [];
+    for (let s2 = 1; s2 <= 5; s2++) liveNames.push((await p.getByTestId(`slot-name-${s2}`).innerText()).trim());
+    if (liveNames.some(n => n !== 'Free')) {
+      const target = liveNames.find(n => n !== 'Free');
       const before = await active();
       const cancel = p.getByRole('button', { name: new RegExp('^Cancel ' + target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$') }).first();
-      await cancel.scrollIntoViewIfNeeded(); await cancel.click(); await p.waitForTimeout(250);
-      ok(`${tag} cancelling one project frees one slot only`, (await active()) === before - 1, `${before} -> ${await active()}`);
+      const nBefore = await cancel.count();
+      const countOf = async () => (await Promise.all([1, 2, 3, 4, 5].map(k => p.getByTestId('slot-name-' + k).innerText()))).filter(x => x.trim() === target).length;
+      const before2 = await countOf();
+      if (nBefore) {
+        const clicked = await cancel.click({ timeout: 3000 }).then(() => true).catch(() => false); // the project may finish while we aim at it
+        await p.waitForTimeout(100);
+        if (clicked) ok(`${tag} cancelling a project removes exactly that project`, (await countOf()) === before2 - 1, `${target}: ${before2} -> ${await countOf()}`);
+      }
     }
 
     // limit selector

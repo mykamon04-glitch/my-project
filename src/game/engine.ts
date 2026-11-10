@@ -1179,6 +1179,12 @@ export class GameEngine {
         this.particles.push(...createExplosionParticles(b.pixelX, b.pixelY, true));
         this.addScreenShake(0.6);
         soundEngine.playExplosion(true);
+        if (b.faction === 'player' && b.constructionProgress >= 1) {
+          const log = (this.aiArchitect.lossLog ??= []);
+          log.unshift({ t: this.gameTime, type: b.type });
+          if (log.length > 20) log.length = 20;
+          this.aiArchitect.planDirty = true; // a destroyed building is a reason to re-plan
+        }
         this.buildings.splice(i, 1);
         this.pathGrid.rebuild(this.mapData, this.buildings);
         continue;
@@ -4072,6 +4078,25 @@ export class GameEngine {
       if (match) ids.push(u.id);
     });
     return ids;
+  }
+
+  /** Armed units (anything that is not a pure support unit). */
+  public selectCombatUnits(faction: Faction = 'player'): string[] {
+    const ids: string[] = [];
+    this.units.forEach(u => {
+      const cfg = UNIT_CONFIGS[u.type];
+      const match = u.faction === faction && u.hp > 0 && (cfg?.damage ?? 0) > 0;
+      u.selected = match;
+      if (match) ids.push(u.id);
+    });
+    return ids;
+  }
+
+  /** Clears every unit and building selection and returns no ids. */
+  public clearSelection(): string[] {
+    this.units.forEach(u => (u.selected = false));
+    this.buildings.forEach(b => (b.selected = false));
+    return [];
   }
 
   public selectIdleUnits(faction: Faction = 'player'): string[] {

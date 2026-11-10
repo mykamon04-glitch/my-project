@@ -4,14 +4,15 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Check, ChevronDown, Hammer, Pause, Play, ScrollText, X } from 'lucide-react';
+import { Check, ChevronDown, Hammer, Lock, Pause, Play, RefreshCw, ScrollText, X } from 'lucide-react';
 import { BUILDING_CONFIGS } from '../../data/gameData';
 import {
   MAX_SLOTS, activeTasks, approveAllTasks, approveTask, cancelTask, getConstructionMode, getLimit, getReservedCredits,
-  getSlotViews, setConstructionLimit, setConstructionMode, setEmergencyReserve, setOption, setStrategy,
+  explainDecision, getBudgetView, getPlan, getSlotViews, isLocked, lockBuilding, recalculatePlan, rejectTask, setConstructionLimit,
+  setConstructionMode, setEmergencyReserve, setOption, setStrategy, setTypeLimit,
 } from '../../game/constructionAI';
 import { GameEngine } from '../../game/engine';
-import { STRATEGIES } from '../../game/constructionStrategy';
+import { BUILDING_ROLES, STRATEGIES } from '../../game/constructionStrategy';
 import { formatCompact } from '../../utils/format';
 
 /**
@@ -32,6 +33,7 @@ const OPTIONS: { key: 'avoidDuplicates' | 'allowPrerequisites' | 'prioritizeDefe
   { key: 'prioritizeDefense', label: 'Prioritize base defense', hint: 'Defenses rank higher, even in strategies that normally skip them' },
 ];
 const DEFAULT_RESERVE = 400;
+const LIMIT_TYPES = (Object.keys(BUILDING_ROLES) as (keyof typeof BUILDING_ROLES)[]).filter(t => t !== 'headquarters' && t !== 'defense_wall');
 const LOG_TONE: Record<string, string> = {
   build: 'text-[#22C99A]', done: 'text-[#22C99A]', delay: 'text-[#F0B84B]', approval: 'text-[#F0B84B]', skip: 'text-[#A7B7C7]', idle: 'text-[#A7B7C7]', info: 'text-[#39B8F2]',
 };
@@ -55,6 +57,9 @@ export const ConstructionAIPanel: React.FC<{ engine: GameEngine; onHaptic?: () =
   const [, setN] = useState(0);
   const [open, setOpen] = useState(true);
   const [showLog, setShowLog] = useState(false);
+  const [showPlan, setShowPlan] = useState(false);
+  const [showExplain, setShowExplain] = useState(false);
+  const [showLimits, setShowLimits] = useState(false);
   useEffect(() => {
     const t = window.setInterval(() => setN(n => n + 1), 400);
     return () => window.clearInterval(t);
@@ -166,6 +171,23 @@ export const ConstructionAIPanel: React.FC<{ engine: GameEngine; onHaptic?: () =
             </button>
           </div>
 
+          {/* status: active / planned / waiting / reservations */}
+          {(() => {
+            const bud = getBudgetView(engine);
+            const planned = active.filter(t => t.status === 'planned' && t.approved).length;
+            const waiting = active.filter(t => t.status === 'waiting_resources').length;
+            const proposals = active.filter(t => !t.approved).length;
+            return (
+              <p className="text-[10px] text-[#A7B7C7] tabular-nums" data-testid="construction-status">
+                <span className="text-[#F1F5F9] font-semibold">Active {active.filter(t => t.status === 'constructing').length}</span>
+                {` · Planned ${planned} · Waiting ${waiting} · Proposed ${proposals}`}
+                {bud.committed > 0 ? ` · $${formatCompact(bud.committed)} reserved` : ''}
+                {bud.urgentHold > 0 ? ` · $${formatCompact(bud.urgentHold)} held for defense` : ''}
+                {bud.recruitFloor > 0 ? ` · $${formatCompact(bud.recruitFloor)} for recruitment` : ''}
+              </p>
+            );
+          })()}
+
           {/* five live slot cards */}
           <div className="space-y-1.5" aria-label="Construction slots">
             {slots.map(v => {
@@ -194,9 +216,9 @@ export const ConstructionAIPanel: React.FC<{ engine: GameEngine; onHaptic?: () =
                           </button>
                         )}
                         <button
-                          aria-label={`Cancel ${v.name}`}
-                          title={v.task.status === 'constructing' ? 'Cancel (existing demolish refund: 50%)' : 'Cancel'}
-                          onClick={() => { onHaptic?.(); cancelTask(engine, v.task!.id); bump(); }}
+                          aria-label={v.task.approved ? `Cancel ${v.name}` : `Reject ${v.name}`}
+                          title={!v.task.approved ? 'Reject: not suggested again for 5 minutes' : v.task.status === 'constructing' ? 'Cancel (existing demolish refund: 50%)' : 'Cancel'}
+                          onClick={() => { onHaptic?.(); if (v.task!.approved) cancelTask(engine, v.task!.id); else rejectTask(engine, v.task!.id); bump(); }}
                           className="w-8 h-8 rounded-lg bg-[#F06470]/15 border border-[#F06470]/50 text-[#F06470] flex items-center justify-center active:scale-95"
                         >
                           <X className="w-4 h-4" />
@@ -238,6 +260,40 @@ export const ConstructionAIPanel: React.FC<{ engine: GameEngine; onHaptic?: () =
               {BUILDING_CONFIGS[t.type].name} {t.status}{t.note ? ` — ${t.note}` : ''}
             </p>
           ))}
+          <div className="grid grid-cols-3 gap-1">
+            <button onClick={() => { onHaptic?.(); recalculatePlan(engine); bump(); }} className="h-9 rounded-lg bg-[#131F2D] border border-[#2a3b4f] text-[10px] font-bold text-[#F1F5F9] flex items-center justify-center gap-1 active:scale-95">
+              <RefreshCw className="w-3.5 h-3.5" />Recalculate
+            </button>
+            <button onClick={() => setShowPlan(p => !p)} aria-expanded={showPlan} className="h-9 rounded-lg bg-[#131F2D] border border-[#2a3b4f] text-[10px] font-bold text-[#39B8F2] active:scale-95">
+              Building priorities
+            </button>
+            <button onClick={() => setShowExplain(p => !p)} aria-expanded={showExplain} className="h-9 rounded-lg bg-[#131F2D] border border-[#2a3b4f] text-[10px] font-bold text-[#39B8F2] active:scale-95">
+              Explain decision
+            </button>
+          </div>
+          {showPlan && (() => {
+            const plan = getPlan(engine);
+            const wanted = plan.rejected.filter(r => r.need > 0).slice(0, 4);
+            return (
+              <ul className="rounded-lg bg-[#131F2D]/70 p-2 space-y-1" data-testid="construction-priorities">
+                {plan.chosen.length === 0 && <li className="text-[10px] text-[#A7B7C7]">Nothing is needed right now. Credits are being saved.</li>}
+                {plan.chosen.map((c, i) => (
+                  <li key={c.type} className="text-[10px] leading-snug">
+                    <span className="text-[#22C99A] font-bold tabular-nums">{i + 1}. {BUILDING_CONFIGS[c.type].name}</span>
+                    <span className="text-[#A7B7C7]"> · priority {c.score} · tier {c.tier} — {c.reason}</span>
+                  </li>
+                ))}
+                {wanted.map(r => (
+                  <li key={r.type} className="text-[10px] leading-snug text-[#F0B84B]">Held: {BUILDING_CONFIGS[r.type].name} — {r.reason}</li>
+                ))}
+              </ul>
+            );
+          })()}
+          {showExplain && (
+            <ul className="rounded-lg bg-[#131F2D]/70 p-2 space-y-1" data-testid="construction-explain">
+              {explainDecision(engine).map((l, i) => <li key={i} className="text-[10px] leading-snug text-[#F1F5F9]">{l}</li>)}
+            </ul>
+          )}
           <p className="text-[10px] text-[#A7B7C7]">
             <span className="text-[#F1F5F9] font-semibold">Last decision: </span>{a.lastDecisionReason ?? '—'}
           </p>
@@ -280,6 +336,42 @@ export const ConstructionAIPanel: React.FC<{ engine: GameEngine; onHaptic?: () =
               );
             })()}
           </div>
+
+          {/* player restrictions: maximum counts, exclusions and locks */}
+          <button
+            onClick={() => setShowLimits(p => !p)}
+            aria-expanded={showLimits}
+            className="w-full flex items-center justify-between text-[11px] font-semibold text-[#39B8F2] min-h-[32px]"
+          >
+            <span>Building limits &amp; locks</span>
+            <ChevronDown className={`w-4 h-4 transition-transform ${showLimits ? 'rotate-180' : ''}`} />
+          </button>
+          {showLimits && (
+            <div className="max-h-60 overflow-y-auto rounded-lg bg-[#131F2D]/70 p-2 space-y-0.5" data-testid="construction-limits">
+              <p className="text-[10px] text-[#A7B7C7] pb-1">Max 0 excludes a building. Locked structures are never cancelled or demolished by the AI.</p>
+              {LIMIT_TYPES.map(t => {
+                const lim = a.typeLimits?.[t];
+                const mine = engine.buildings.filter(b => b.faction === 'player' && b.type === t);
+                const locked = mine.length > 0 && mine.every(b => isLocked(engine, b.id));
+                const nm = BUILDING_CONFIGS[t].name;
+                return (
+                  <div key={t} className="flex items-center justify-between gap-1.5 min-h-[34px]">
+                    <span className="min-w-0 flex-1 text-[11px] text-[#F1F5F9] truncate">{nm}<span className="text-[#A7B7C7]"> ({mine.length})</span></span>
+                    <button
+                      aria-label={`${locked ? 'Unlock' : 'Lock'} existing ${nm}`}
+                      aria-pressed={locked}
+                      disabled={mine.length === 0}
+                      onClick={() => { mine.forEach(b => lockBuilding(engine, b.id, !locked)); bump(); }}
+                      className={`w-8 h-8 rounded-lg border flex items-center justify-center disabled:opacity-30 ${locked ? 'bg-[#F0B84B]/20 border-[#F0B84B] text-[#F0B84B]' : 'bg-[#1B2B3C] border-[#2a3b4f] text-[#A7B7C7]'}`}
+                    ><Lock className="w-3.5 h-3.5" /></button>
+                    <button aria-label={`${nm} max minus`} onClick={() => { setTypeLimit(engine, t, lim === undefined ? 0 : lim <= 0 ? undefined : lim - 1); bump(); }} className="w-8 h-8 rounded-lg bg-[#1B2B3C] border border-[#2a3b4f] text-[#F1F5F9] font-bold active:scale-95">−</button>
+                    <span className="w-9 text-center text-[11px] font-bold tabular-nums text-[#F1F5F9]" aria-label={`${nm} maximum`}>{lim === undefined ? '∞' : lim}</span>
+                    <button aria-label={`${nm} max plus`} onClick={() => { setTypeLimit(engine, t, lim === undefined ? undefined : lim + 1); bump(); }} className="w-8 h-8 rounded-lg bg-[#1B2B3C] border border-[#2a3b4f] text-[#F1F5F9] font-bold active:scale-95">+</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* decision log */}
           <button

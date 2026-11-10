@@ -108,6 +108,8 @@ interface MobileBottomSheetProps {
   onSelectAirUnits?: () => void;
   onSelectSupportUnits?: () => void;
   onSelectIdleUnits?: () => void;
+  onSelectCombatUnits?: () => void;
+  onClearSelection?: () => void;
   onSelectDamagedUnits?: () => void;
   onSelectSquad?: (squadNum: number) => void;
   onSaveSquad?: (squadNum: number) => void;
@@ -305,6 +307,8 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
   onSelectAirUnits,
   onSelectSupportUnits,
   onSelectIdleUnits,
+  onSelectCombatUnits,
+  onClearSelection,
   onSelectDamagedUnits,
   onSelectSquad,
   onSaveSquad,
@@ -519,6 +523,24 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
                 LINE
               </button>
             </div>
+          </div>
+
+          {/* One-tap selection filters (existing unit categories only) */}
+          <div className="flex items-center gap-1 pt-1.5 overflow-x-auto no-scrollbar" role="group" aria-label="Selection filters" data-testid="selection-filters">
+            {([
+              ['All', onSelectAllArmy], ['Idle', onSelectIdleUnits], ['Combat', onSelectCombatUnits],
+              ['Infantry', onSelectInfantry], ['Vehicles', onSelectTanks], ['Aircraft', onSelectAirUnits], ['Clear', onClearSelection],
+            ] as [string, (() => void) | undefined][]).filter(([, fn]) => fn).map(([label, fn]) => (
+              <button
+                key={label}
+                onClick={() => { triggerHaptic(); fn!(); }}
+                className={`shrink-0 px-2.5 h-8 rounded-lg text-[10px] font-bold border active:scale-95 ${
+                  label === 'Clear' ? 'bg-[#F06470]/15 border-[#F06470]/50 text-[#F06470]' : 'bg-[#1B2730] border-[#2c3e50] text-[#F1F5F7]'
+                }`}
+              >
+                {label === 'All' ? 'Select All' : label === 'Clear' ? 'Clear Selection' : label}
+              </button>
+            ))}
           </div>
 
           {/* Unit Breakdown Chips Row & Primary Actions */}

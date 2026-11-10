@@ -42,6 +42,8 @@ import { formatCompact, formatSigned } from '../../utils/format';
 interface MobileTopHUDProps {
   engine: GameEngine;
   onOpenSettings: () => void;
+  /** Tap on the troop counter: select every controllable friendly troop. */
+  onSelectAllTroops?: () => void;
   onOpenSaveLoad: () => void;
   onOpenAdvisor: () => void;
   onCenterHQ: () => void;
@@ -73,9 +75,18 @@ const CHIP_TONES = {
 } as const;
 
 /** One resource chip: icon + value + sub-caption. min-w-0 lets it shrink instead of overflowing. */
-const HudChip: React.FC<{ tone: keyof typeof CHIP_TONES; icon: React.ReactNode; value: React.ReactNode; sub: string; title: string; onClick: () => void }> = ({ tone, icon, value, sub, title, onClick }) => (
+const HudChip: React.FC<{ tone: keyof typeof CHIP_TONES; icon: React.ReactNode; value: React.ReactNode; sub: string; title: string; onClick: () => void; onLongPress?: () => void }> = ({ tone, icon, value, sub, title, onClick, onLongPress }) => {
+  const timer = React.useRef<number | null>(null);
+  const fired = React.useRef(false);
+  const clear = () => { if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null; } };
+  return (
   <button
-    onClick={onClick}
+    onClick={() => { if (fired.current) { fired.current = false; return; } onClick(); }}
+    onPointerDown={onLongPress ? () => { fired.current = false; clear(); timer.current = window.setTimeout(() => { fired.current = true; onLongPress(); }, 550); } : undefined}
+    onPointerUp={onLongPress ? clear : undefined}
+    onPointerLeave={onLongPress ? clear : undefined}
+    onPointerCancel={onLongPress ? clear : undefined}
+    onContextMenu={onLongPress ? ev => ev.preventDefault() : undefined}
     title={title}
     className={`min-w-0 h-10 flex items-center justify-center min-[420px]:justify-start gap-1 px-1 min-[420px]:px-1.5 rounded-xl border bg-[#1B2B3C] active:scale-95 transition-all ${CHIP_TONES[tone]}`}
   >
@@ -85,13 +96,15 @@ const HudChip: React.FC<{ tone: keyof typeof CHIP_TONES; icon: React.ReactNode; 
       <span className="truncate text-[9px] mt-0.5 tabular-nums text-[#A7B7C7]">{sub}</span>
     </span>
   </button>
-);
+  );
+};
 
 type DetailModalType = 'credits' | 'power' | 'pop' | 'alert' | 'menu' | 'sandbox' | null;
 
 export const MobileTopHUD: React.FC<MobileTopHUDProps> = ({
   engine,
   onOpenSettings,
+  onSelectAllTroops,
   onOpenSaveLoad,
   onOpenAdvisor,
   onCenterHQ,
@@ -189,8 +202,9 @@ export const MobileTopHUD: React.FC<MobileTopHUDProps> = ({
           />
           <HudChip
             tone={isPopCapped ? 'warn' : 'ok'}
-            title="Troop capacity"
-            onClick={() => setActiveModal(activeModal === 'pop' ? null : 'pop')}
+            title="Tap: select all troops · long-press: troop capacity details"
+            onClick={() => (onSelectAllTroops ? onSelectAllTroops() : setActiveModal(activeModal === 'pop' ? null : 'pop'))}
+            onLongPress={() => setActiveModal(activeModal === 'pop' ? null : 'pop')}
             icon={<Users className="w-4 h-4 shrink-0" />}
             value={`${econ.population}/${econ.populationCap}`}
             sub="Troops"

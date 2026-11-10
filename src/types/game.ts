@@ -505,7 +505,7 @@ export type AIArchitectMode =
   | 'custom';
 
 /** Construction AI strategy (V8.1). */
-export type ConstructionStrategyId = 'balanced' | 'defense_only' | 'army_production' | 'economy' | 'adaptive';
+export type ConstructionStrategyId = 'balanced' | 'defense_only' | 'army_production' | 'economy' | 'adaptive' | 'support_recovery' | 'strategic';
 
 /** One bounded, event-based entry of the Construction AI decision log. */
 export interface ConstructionLogEntry {
@@ -543,6 +543,7 @@ export interface ConstructionTask {
   finishedAt?: number;
   retries: number; // bounded site re-plans
   note?: string; // failure / cancel explanation
+  tier?: number; // V8.2 budget priority 1 (imminent loss) .. 5 (expansion)
 }
 
 export interface AIArchitectDecision {
@@ -581,6 +582,14 @@ export interface AIArchitectSettings {
   typeLimits?: Partial<Record<BuildingType, number>>;
   decisionLog?: ConstructionLogEntry[];
   lastPlanned?: Record<string, number>; // building type -> game time it was last planned (cooldowns)
+  /** Supreme AI Base Commander (V8.2). */
+  schemaVersion?: number;
+  rejected?: Record<string, number>; // building type -> game time until which a rejected suggestion is not repeated
+  lockedBuildingIds?: string[];      // structures the AI must never cancel / demolish
+  lossLog?: { t: number; type: BuildingType }[]; // recently destroyed completed structures (bounded)
+  threatMemo?: { level: string; t: number };     // hysteresis: highest recent threat level
+  planDirty?: boolean;                           // an event happened that justifies re-planning now
+  planSignature?: string;
   /** Multi-build Construction AI (V6.2). Persisted with the rest of aiArchitect. */
   lastAutoDoctrine?: AIArchitectMode; // doctrine to return to when switching SUGGEST -> AUTO
   tasks?: ConstructionTask[];
