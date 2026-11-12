@@ -1,4 +1,4 @@
-import { ART_HEIGHT, drawBuildingArt, drawHologram, wallNeighbors } from './buildingArt';
+import { ART_HEIGHT, drawBuildingArt, drawHologram, drawRuin, wallNeighbors } from './buildingArt';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -132,6 +132,7 @@ export class TacticalRenderer {
 
     // 6. Render Buildings (Sorted by Y for isometric depth)
     this.renderBaseRoads(buildings);
+    this.renderRuins(buildings);
     this.renderBuildings(buildings, units, settings);
 
     // 7. Render Ground Units (Infantry & Vehicles)
@@ -1165,11 +1166,15 @@ export class TacticalRenderer {
       const x0 = Math.min(...xs), x1 = Math.max(...xs);
       const road = (pts: number[], width: number) => {
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-        ctx.strokeStyle = 'rgba(30,34,38,0.5)'; ctx.lineWidth = width + 4;
+        ctx.strokeStyle = 'rgba(70,62,48,0.45)'; ctx.lineWidth = width + 5;
         ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.stroke();
-        ctx.strokeStyle = '#555b61'; ctx.lineWidth = width;
+        ctx.strokeStyle = '#6c6b65'; ctx.lineWidth = width;
         ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.stroke();
-        ctx.strokeStyle = 'rgba(240,235,200,0.45)'; ctx.lineWidth = 1; ctx.setLineDash([7, 7]);
+        ctx.strokeStyle = 'rgba(25,26,28,0.16)'; ctx.lineWidth = width * 0.5; ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.stroke(); // tyre wear
+        ctx.strokeStyle = 'rgba(20,20,20,0.22)'; ctx.lineWidth = width; ctx.setLineDash([1, 17]); ctx.lineCap = 'butt';
+        ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.stroke(); // expansion joints
+        ctx.strokeStyle = 'rgba(226,223,210,0.28)'; ctx.lineWidth = 0.8; ctx.setLineDash([7, 9]);
         ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.stroke();
         ctx.setLineDash([]);
       };
@@ -1183,6 +1188,34 @@ export class TacticalRenderer {
   }
 
   private aimIndex: Map<string, Unit> | null = null;
+  /** Visual memory of buildings (for wreckage when one is destroyed). Not game state and not saved. */
+  private seenBuildings = new Map<string, { x: number; y: number; w: number; h: number; gx: number; gy: number; ratio: number; seed: number }>();
+  private ruins: { x: number; y: number; w: number; h: number; gx: number; gy: number; seed: number; t: number }[] = [];
+
+  private renderRuins(buildings: Building[]) {
+    const now = this.animFrameTime;
+    const alive = new Set<string>();
+    for (const b of buildings) alive.add(b.id);
+    for (const [id, m] of this.seenBuildings) {
+      if (!alive.has(id)) {
+        if (m.ratio >= 0) { this.ruins.push({ ...m, t: now }); if (this.ruins.length > 40) this.ruins.shift(); } // a completed structure that is gone (destroyed or demolished) leaves wreckage
+        this.seenBuildings.delete(id);
+      }
+    }
+    if (!this.ruins.length) return;
+    const occupied = new Set(buildings.map(b => `${b.x}:${b.y}`));
+    this.ruins = this.ruins.filter(r => now >= r.t && now - r.t < 240 && !occupied.has(`${r.gx}:${r.gy}`));
+    for (const r of this.ruins) {
+      if (r.x + r.w < this.viewMinX || r.x > this.viewMaxX || r.y + r.h < this.viewMinY || r.y > this.viewMaxY) continue;
+      const age = now - r.t;
+      drawRuin(this.ctx, r.x, r.y, r.w, r.h, r.seed, age > 200 ? 1 - (age - 200) / 40 : 1);
+      if (age < 25) {                                                                              // smouldering for a while
+        const ctx = this.ctx;
+        for (let i = 0; i < 3; i++) { const ph = (now * 0.3 + i / 3 + r.seed) % 1; ctx.globalAlpha = 0.28 * (1 - ph) * (1 - age / 25); ctx.fillStyle = '#3c3c3a'; ctx.beginPath(); ctx.arc(r.x + r.w * (0.35 + i * 0.15) + ph * 8, r.y + r.h * 0.5 - ph * 26, 3 + ph * 8, 0, Math.PI * 2); ctx.fill(); }
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
 
   private renderBuildings(buildings: Building[], units: Unit[], settings?: Partial<GameSettings>) {
     const ctx = this.ctx;
@@ -1218,6 +1251,7 @@ export class TacticalRenderer {
       const x = b.pixelX - w / 2;
       const y = b.pixelY - h / 2;
       const roofY = y - elev;
+      this.seenBuildings.set(b.id, { x, y, w, h, gx: b.x, gy: b.y, ratio: b.constructionProgress >= 1 ? 1 : -1, seed: Math.abs(Math.sin(b.x * 12.9898 + b.y * 78.233) * 43758.5453) % 1 });
 
       ctx.save();
 
@@ -1246,16 +1280,18 @@ export class TacticalRenderer {
         const cx = b.pixelX;
         const cy = roofY + h / 2;
 
-        // Hull scorch marks
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
-        ctx.beginPath();
-        ctx.arc(cx - w * 0.2, cy - h * 0.15, w * 0.2, 0, Math.PI * 2);
-        ctx.arc(cx + w * 0.15, cy + h * 0.15, w * 0.16, 0, Math.PI * 2);
-        ctx.fill();
+        // Scorched, soot-stained surfaces (soft radial burns that grow as the structure loses HP)
+        const sev = 1 - b.hp / (b.maxHp * 0.6);
+        for (const [ox, oy, rr] of [[-0.2, -0.15, 0.24], [0.16, 0.14, 0.2], [0.02, -0.3, 0.16]] as const) {
+          const sx = cx + w * ox, sy = cy + h * oy, r = w * rr * (0.6 + sev * 0.6);
+          const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+          sg.addColorStop(0, `rgba(10,9,8,${0.55 * (0.4 + sev * 0.6)})`); sg.addColorStop(0.6, `rgba(14,12,10,${0.3 * (0.4 + sev * 0.6)})`); sg.addColorStop(1, 'rgba(14,12,10,0)');
+          ctx.fillStyle = sg; ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
+        }
 
         // Structural stress fractures
-        ctx.strokeStyle = '#0f172a';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(8,8,8,0.6)';
+        ctx.lineWidth = 0.7;
         ctx.beginPath();
         ctx.moveTo(cx - w * 0.25, cy);
         ctx.lineTo(cx - w * 0.1, cy - h * 0.18);
@@ -1265,7 +1301,7 @@ export class TacticalRenderer {
         // Rising smoke plume when heavily damaged (< 40% HP)
         if (b.hp < b.maxHp * 0.4) {
           const smokeAlpha = 0.45 + Math.sin(this.animFrameTime * 4) * 0.15;
-          ctx.fillStyle = `rgba(30, 41, 59, ${smokeAlpha})`;
+          ctx.fillStyle = `rgba(48, 46, 44, ${smokeAlpha * 0.7})`;
           const puffY = (this.animFrameTime * 15) % 18;
           ctx.beginPath();
           ctx.arc(cx - 8, cy - h * 0.3 - puffY, 7 + puffY * 0.4, 0, Math.PI * 2);

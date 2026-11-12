@@ -1,19 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import { BUILDING_CONFIGS } from '../src/data/gameData';
-import { ART_HEIGHT, BUILDING_ART_TYPES, __drawDesignForTest, constructionStage, K } from '../src/game/buildingArt';
+import { ART_HEIGHT, BUILDING_ART_TYPES, __drawDesignForTest, constructionStage, drawRuinDesign, K } from '../src/game/buildingArt';
 import type { BuildingType } from '../src/types/game';
 
 /** A recording 2D context: logs every drawing call and tracks the horizontal extent of what is drawn. */
 function recorder() {
   const log: string[] = [];
   let minX = Infinity, maxX = -Infinity;
-  const ext = (x: number, r = 0) => { if (Number.isFinite(x)) { minX = Math.min(minX, x - r); maxX = Math.max(maxX, x + r); } };
+  // drawing inside a clip region (textures, weathering) cannot leave the clipped face, so it is not counted
+  let depth = 0; const clipAt: number[] = [];
+  const ext = (x: number, r = 0) => { if (clipAt.length === 0 && Number.isFinite(x)) { minX = Math.min(minX, x - r); maxX = Math.max(maxX, x + r); } };
   const target: any = {};
   const handler: ProxyHandler<any> = {
     get(_t, prop: string) {
       if (prop in target) return target[prop];
       return (...a: any[]) => {
         log.push(prop + '(' + a.map(v => (typeof v === 'number' ? Math.round(v) : typeof v)).join(',') + ')');
+        if (prop === 'save') depth++; else if (prop === 'restore') { depth--; while (clipAt.length && clipAt[clipAt.length - 1] > depth) clipAt.pop(); } else if (prop === 'clip') clipAt.push(depth);
         if (prop === 'moveTo' || prop === 'lineTo') ext(a[0]);
         else if (prop === 'fillRect' || prop === 'rect' || prop === 'roundRect' || prop === 'strokeRect') { ext(a[0]); ext(a[0] + a[2]); }
         else if (prop === 'ellipse') ext(a[0], a[2]);
@@ -23,7 +26,7 @@ function recorder() {
         return undefined;
       };
     },
-    set(_t, prop: string, v) { target[prop] = v; if (prop === 'fillStyle') log.push('fill:' + String(v)); return true; },
+    set(_t, prop: string, v) { target[prop] = v; if (prop === 'fillStyle') log.push('fill:' + String(v)); if (prop === 'globalAlpha') log.push('alpha:' + Number(v).toFixed(2)); return true; },
   };
   return { ctx: new Proxy(target, handler) as unknown as CanvasRenderingContext2D, log, extent: () => ({ minX, maxX }) };
 }
@@ -101,6 +104,33 @@ describe('building art (V10)', () => {
     __drawDesignForTest(a.ctx, 'defense_wall', 'player', w, d, 1, { neighbors: 0 });
     __drawDesignForTest(b.ctx, 'defense_wall', 'player', w, d, 1, { neighbors: 10 }); // east + west
     expect(sig(a.log)).not.toBe(sig(b.log));
+  });
+
+  it('damaged buildings lose their lighting (state-driven), and wreckage has its own design', () => {
+    const [w, d] = SIZES.headquarters;
+    const ok = recorder(), hurt = recorder(), dead = recorder();
+    __drawDesignForTest(ok.ctx, 'headquarters', 'player', w, d, 1, { hpRatio: 1 });
+    __drawDesignForTest(hurt.ctx, 'headquarters', 'player', w, d, 1, { hpRatio: 0.2 });
+    expect(sig(ok.log)).not.toBe(sig(hurt.log));
+    drawRuinDesign(dead.ctx, w, d, 0.3);
+    expect(dead.log.length).toBeGreaterThan(60);
+    expect(sig(dead.log)).not.toBe(sig(ok.log));
+  });
+
+  it('palette is muted: no saturated fills in any design', () => {
+    for (const t of BUILDING_ART_TYPES) {
+      const r = recorder(); const [w, d] = SIZES[t];
+      __drawDesignForTest(r.ctx, t, 'player', w, d, 0.6);
+      for (const l of r.log) {
+        const m = /^fill:(?:#([0-9a-f]{6})|rgb\((\d+),(\d+),(\d+)\))$/i.exec(l);
+        if (!m) continue;
+        const [R, G, B] = m[1] ? [parseInt(m[1].slice(0, 2), 16), parseInt(m[1].slice(2, 4), 16), parseInt(m[1].slice(4, 6), 16)] : [+m[2], +m[3], +m[4]];
+        const mx = Math.max(R, G, B), mn = Math.min(R, G, B);
+        const sat = mx === 0 ? 0 : (mx - mn) / mx;
+        // small lamps / lit windows are exempt by size, not colour, so only large-area base tones are checked: they must stay desaturated
+        if (mx > 60 && mx < 200) expect(sat, `${t} ${l}`).toBeLessThan(0.75);
+      }
+    }
   });
 
   it('construction visuals follow the REAL progress value (no separate timer)', () => {

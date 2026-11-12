@@ -57,9 +57,11 @@ export function groundColorAt(wx: number, wy: number, seed = 1337): [number, num
   const dry = Math.max(0, Math.min(1, (mid - 0.58) / 0.2)); // dry, olive/earth patches
   const damp = Math.max(0, Math.min(1, (0.42 - mid) / 0.2)); // darker, damper hollows
 
-  const hue = 140 + (big - 0.5) * 30 - dry * 52 + damp * 4;
-  const sat = 24 + (big - 0.5) * 8 - dry * 8 + damp * 3;
-  const light = 15.2 + (big - 0.5) * 5.0 + (mid - 0.5) * 4.6 + (fine - 0.5) * 2.6 + dry * 2.2 - damp * 2.0;
+  // V10.1: muted olive grassland drifting to dry earth, slightly lighter and less saturated than before so the terrain reads as
+  // real ground under daylight rather than a dark green backdrop.
+  const hue = 96 + (big - 0.5) * 26 - dry * 50 + damp * 10;
+  const sat = 19 + (big - 0.5) * 6 - dry * 3 + damp * 3;
+  const light = 19.5 + (big - 0.5) * 5.0 + (mid - 0.5) * 5.0 + (fine - 0.5) * 2.8 + dry * 3.2 - damp * 2.4;
   return hslToRgb(hue, sat, light);
 }
 
@@ -101,5 +103,18 @@ export function buildGroundChunk(wx0: number, wy0: number, size: number, seed = 
   octx.imageSmoothingEnabled = true;
   octx.imageSmoothingQuality = 'high';
   octx.drawImage(src, 1, 1, size / TEXEL_PX, size / TEXEL_PX, 0, 0, size, size);
+  // micro-texture: fine grain plus sparse grass tufts / pebbles, so the ground is not a smooth gradient (once per chunk)
+  try {
+    const im = octx.getImageData(0, 0, size, size), px = im.data;
+    let h = (Math.imul(wx0 | 0, 73856093) ^ Math.imul(wy0 | 0, 19349663) ^ seed) >>> 0;
+    for (let i = 0; i < px.length; i += 4) {
+      h = (Math.imul(h, 1664525) + 1013904223) >>> 0;
+      const r = (h >>> 8) / 16777216;
+      let n = (r - 0.5) * 9;
+      if (r > 0.985) n = -14; else if (r < 0.012) n = 12;       // tuft shadow / dry stalk or pebble
+      px[i] = Math.max(0, Math.min(255, px[i] + n)); px[i + 1] = Math.max(0, Math.min(255, px[i + 1] + n)); px[i + 2] = Math.max(0, Math.min(255, px[i + 2] + n * 0.8));
+    }
+    octx.putImageData(im, 0, 0);
+  } catch { /* texture stays smooth */ }
   return out;
 }
