@@ -1,3 +1,4 @@
+import { ART_HEIGHT, drawBuildingArt, drawHologram, wallNeighbors } from './buildingArt';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -130,7 +131,8 @@ export class TacticalRenderer {
     this.renderWreckages(wreckages);
 
     // 6. Render Buildings (Sorted by Y for isometric depth)
-    this.renderBuildings(buildings, settings);
+    this.renderBaseRoads(buildings);
+    this.renderBuildings(buildings, units, settings);
 
     // 7. Render Ground Units (Infantry & Vehicles)
     const groundUnits = units.filter(u => !UNIT_CONFIGS[u.type].isAir);
@@ -1145,9 +1147,52 @@ export class TacticalRenderer {
     return cv;
   }
 
-  private renderBuildings(buildings: Building[], settings?: Partial<GameSettings>) {
+  /**
+   * Base infrastructure drawn on the ground before the buildings: an asphalt spine south of the HQ and a feeder road from every
+   * production / industrial building to it. Purely visual (pathfinding and placement never read it) and rebuilt each frame from
+   * the real building list, so it always matches the layout.
+   */
+  private renderBaseRoads(buildings: Building[]) {
+    const ctx = this.ctx;
+    for (const faction of ['player', 'enemy'] as const) {
+      const mine = buildings.filter(b => b.faction === faction && b.hp > 0 && b.constructionProgress >= 0.2);
+      const hq = mine.find(b => b.type === 'headquarters');
+      if (!hq) continue;
+      const feeders = mine.filter(b => b.type !== 'headquarters' && b.type !== 'defense_wall' && b.width * b.height >= 4);
+      if (!feeders.length) continue;
+      const spineY = hq.pixelY + (hq.height * 40) / 2 + 20;
+      const xs = [hq.pixelX, ...feeders.map(b => b.pixelX)];
+      const x0 = Math.min(...xs), x1 = Math.max(...xs);
+      const road = (pts: number[], width: number) => {
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.strokeStyle = 'rgba(30,34,38,0.5)'; ctx.lineWidth = width + 4;
+        ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.stroke();
+        ctx.strokeStyle = '#555b61'; ctx.lineWidth = width;
+        ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.stroke();
+        ctx.strokeStyle = 'rgba(240,235,200,0.45)'; ctx.lineWidth = 1; ctx.setLineDash([7, 7]);
+        ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.stroke();
+        ctx.setLineDash([]);
+      };
+      if (x1 - x0 > 8 && x1 > this.viewMinX && x0 < this.viewMaxX) road([x0 - 10, spineY, x1 + 10, spineY], 16);
+      for (const b of feeders) {
+        const ex = b.pixelX, ey = b.pixelY + (b.height * 40) / 2;           // production exit side (south)
+        if (ex < this.viewMinX || ex > this.viewMaxX || ey < this.viewMinY - 200 || ey > this.viewMaxY + 200) continue;
+        if (ey < spineY) road([ex, ey, ex, spineY], 12); else road([ex, b.pixelY - (b.height * 40) / 2, ex, spineY], 12);
+      }
+    }
+  }
+
+  private aimIndex: Map<string, Unit> | null = null;
+
+  private renderBuildings(buildings: Building[], units: Unit[], settings?: Partial<GameSettings>) {
     const ctx = this.ctx;
     const sorted = [...buildings].sort((a, b) => a.pixelY - b.pixelY);
+    this.aimIndex = null;
+    let wallIndex: Map<string, Building> | null = null;
+    if (buildings.some(b => b.type === 'defense_wall')) {
+      wallIndex = new Map();
+      for (const b of buildings) if (b.type === 'defense_wall') wallIndex.set(`${b.faction}:${b.x}:${b.y}`, b);
+    }
 
     sorted.forEach(b => {
       if (b.hp <= 0) return;
@@ -1158,7 +1203,7 @@ export class TacticalRenderer {
 
       const w = b.width * 40;
       const h = b.height * 40;
-      const elev = this.getBuildingElevation(b.type);
+      const elev = ART_HEIGHT[b.type] ?? this.getBuildingElevation(b.type);
 
       // Frustum culling for mobile GPU performance
       if (
@@ -1176,71 +1221,25 @@ export class TacticalRenderer {
 
       ctx.save();
 
-      const fancy = settings?.graphicsQuality !== 'low'; // material pass is skipped on the Performance preset
-
-      // 1. Directional ground shadow (south-east): a soft penumbra plus a tighter core, smaller than before
+      // 1. Directional ground shadow (south-east), sized to the real height of the design
       if (this.shadowLvl !== 'off') {
-        ctx.drawImage(this.getBuildingShadow(w, h, elev), x, y);
+        ctx.drawImage(this.getBuildingShadow(w, h, Math.round(elev * 0.7)), x, y);
       }
 
-      // 2. Integrated Architectural Foundation Footing (flush beneath walls, no artificial platform)
-      ctx.fillStyle = isPlayer ? '#16202c' : '#261616';
-      ctx.beginPath();
-      ctx.roundRect(x + 2, y + 2, w - 4, h - 4, 3);
-      ctx.fill();
-
-      // 3. 2.5D Vertical Front Wall Facet (Extruded height between ground and elevated roof)
-      if (elev > 0) {
-        ctx.fillStyle = baseBodyColor;
-        ctx.fillRect(x + 2, y + h - elev, w - 4, elev);
-
-        // Front wall shadow & border
-        ctx.strokeStyle = '#090e14';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(x + 2, y + h - elev, w - 4, elev);
-
-
-        // Vertical armored reinforcement ribs on the front face
-        const ribStep = Math.max(16, Math.floor(w / 4));
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
-        ctx.lineWidth = 1;
-        for (let rx = x + ribStep; rx < x + w - 6; rx += ribStep) {
-          ctx.beginPath();
-          ctx.moveTo(rx, y + h - elev);
-          ctx.lineTo(rx, y + h);
-          ctx.stroke();
-        }
+      // 2. Real 2.5D architecture: volumes, roofs, side walls, machinery, live animation and the staged construction sequence.
+      //    Everything is a function of the building's real state (constructionProgress, target, last attack, queue, level).
+      let aim: number | null = null;
+      let recoil = 0;
+      if (b.targetUnitId && b.constructionProgress >= 1) {
+        if (!this.aimIndex) { this.aimIndex = new Map(); for (const u of units) this.aimIndex.set(u.id, u); }
+        const tu = this.aimIndex.get(b.targetUnitId);
+        if (tu && tu.hp > 0) aim = Math.atan2(tu.y - b.pixelY, tu.x - b.pixelX);
       }
-
-      // 4. Armored Elevated Structure Roof Deck (Layer 2)
-      ctx.fillStyle = roofColor;
-      ctx.beginPath();
-      ctx.roundRect(x + 2, roofY + 2, w - 4, h - 4, 3);
-      ctx.fill();
-
-      // Top edge highlight (directional sunlight from north-west)
-      ctx.strokeStyle = isPlayer ? '#475569' : '#572727';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // Roof panel seams
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x + 4, roofY + h / 2);
-      ctx.lineTo(x + w - 4, roofY + h / 2);
-      ctx.stroke();
-
-      if (fancy) {
-        // Static material layer (wall/roof shading, bevel, seams, rivets, weathering, contact shadow): rendered once per
-        // size into a cached sprite and drawn with a single drawImage instead of ~25 canvas operations per building.
-        const seed = Math.abs(Math.sin(b.x * 12.9898 + b.y * 78.233) * 43758.5453) % 1;
-        const sprite = this.getBuildingMaterial(w, h, elev, Math.floor(seed * 4));
-        ctx.drawImage(sprite, x, roofY, w, h + elev);
-      }
-
-      // 5. Building-Specific Architecture (Elevated on the Roof Deck)
-      this.renderBuildingDetails(b, x, roofY, w, h, isPlayer, accentColor);
+      if (b.lastAttackTime > 0) recoil = Math.max(0, 1 - (this.animFrameTime - b.lastAttackTime) / 0.22);
+      drawBuildingArt(ctx, b, x, y, w, h, this.animFrameTime, {
+        aim, recoil, quality: settings?.graphicsQuality,
+        neighbors: wallIndex && b.type === 'defense_wall' ? wallNeighbors(b, wallIndex) : 0,
+      });
 
       // 6. Damage States (scorched armor, fracture cracks, rising smoke & fire embers)
       if (b.hp < b.maxHp * 0.6) {
@@ -1287,38 +1286,8 @@ export class TacticalRenderer {
         }
       }
 
-      // 7. Construction scaffolding if building
+      // 7. Construction readout (the animation itself is drawn by drawBuildingArt from the same progress value)
       if (b.constructionProgress < 1) {
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
-        ctx.fillRect(x, roofY, w, h + elev);
-
-        ctx.strokeStyle = 'rgba(245, 158, 11, 0.45)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(x, roofY);
-        ctx.lineTo(x + w, y + h);
-        ctx.moveTo(x + w, roofY);
-        ctx.lineTo(x, y + h);
-        ctx.moveTo(x + w * 0.33, roofY);
-        ctx.lineTo(x + w * 0.33, y + h);
-        ctx.moveTo(x + w * 0.66, roofY);
-        ctx.lineTo(x + w * 0.66, y + h);
-        ctx.stroke();
-
-        // Yellow Crane at top corner
-        ctx.fillStyle = '#f59e0b';
-        ctx.fillRect(x + w - 16, roofY - 8, 16, 4);
-        ctx.fillRect(x + w - 10, roofY - 14, 4, 10);
-        const hookY = roofY + (h * 0.75) * (1 - b.constructionProgress);
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(x + w - 14, roofY - 4);
-        ctx.lineTo(x + w - 14, hookY);
-        ctx.stroke();
-        ctx.fillStyle = '#cbd5e1';
-        ctx.fillRect(x + w - 16, hookY, 4, 4);
-
         // Progress bar
         const barW = Math.min(w - 12, 90);
         const barX = b.pixelX - barW / 2;
@@ -3373,53 +3342,10 @@ export class TacticalRenderer {
     ctx.lineTo(x + w + 2, y + h + 2 - cornerLen);
     ctx.stroke();
 
-    // 4. Holographic Building Blueprint Projection (True 2.5D Geometry Hologram)
-    const elev = this.getBuildingElevation(preview.type);
+    // 4. Holographic blueprint: the real building design, tinted by validity
+    const elev = ART_HEIGHT[preview.type] ?? this.getBuildingElevation(preview.type);
     const roofY = y - elev;
-
-    ctx.save();
-    ctx.globalAlpha = 0.55;
-
-    // 2.5D front wall ghost
-    if (elev > 0) {
-      ctx.fillStyle = preview.isValid ? 'rgba(56, 185, 138, 0.2)' : 'rgba(228, 91, 99, 0.2)';
-      ctx.fillRect(x + 2, y + h - elev, w - 4, elev);
-      ctx.strokeStyle = preview.isValid ? '#38B98A' : '#E45B63';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(x + 2, y + h - elev, w - 4, elev);
-    }
-
-    // Elevated roof deck ghost
-    ctx.fillStyle = preview.isValid ? 'rgba(56, 185, 138, 0.28)' : 'rgba(228, 91, 99, 0.28)';
-    ctx.fillRect(x + 2, roofY + 2, w - 4, h - 4);
-    ctx.strokeStyle = preview.isValid ? '#38B98A' : '#E45B63';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(x + 2, roofY + 2, w - 4, h - 4);
-
-    const ghostBuilding: Building = {
-      id: 'ghost_preview',
-      type: preview.type,
-      faction: 'player',
-      x: preview.gridX,
-      y: preview.gridY,
-      pixelX: cx,
-      pixelY: cy,
-      width: bw,
-      height: bh,
-      hp: config.maxHp,
-      maxHp: config.maxHp,
-      armor: config.armor,
-      level: 1,
-      constructionProgress: 1.0,
-      isUnderConstruction: false,
-      isRepairing: false,
-      productionQueue: [],
-      lastAttackTime: 0,
-      selected: false,
-      rotation: preview.rotation || 0,
-    };
-    this.renderBuildingDetails(ghostBuilding, x, roofY, w, h, true, preview.isValid ? '#38B98A' : '#E45B63');
-    ctx.restore();
+    drawHologram(ctx, preview.type, x, y, w, h, preview.isValid, this.animFrameTime);
 
     // 5. Tactical Status Floating Header
     const plaqueW = Math.max(140, w + 20);

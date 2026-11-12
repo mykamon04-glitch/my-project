@@ -164,6 +164,7 @@ export default function App() {
 
       const engine = new GameEngine(mode, difficulty, mapId, campaignId, matchConfig);
       engineRef.current = engine;
+      if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')) { (window as any).__engine = engine; (window as any).__camRef = cameraRef; } // test hook, only with ?debug
 
       const playerHQ = engine.buildings.find(b => b.type === 'headquarters' && b.faction === 'player');
       const startX = playerHQ ? playerHQ.pixelX : engine.mapData.playerSpawn.x;
@@ -368,6 +369,7 @@ export default function App() {
     const ok = engine.importSaveData(saveData);
     if (ok) {
       engineRef.current = engine;
+      if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')) { (window as any).__engine = engine; (window as any).__camRef = cameraRef; } // test hook, only with ?debug
       const playerHQ = engine.buildings.find(b => b.type === 'headquarters' && b.faction === 'player');
       const startX = playerHQ ? playerHQ.pixelX : engine.mapData.playerSpawn.x;
       const startY = playerHQ ? playerHQ.pixelY : engine.mapData.playerSpawn.y;
