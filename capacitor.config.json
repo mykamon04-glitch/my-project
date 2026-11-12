@@ -1,0 +1,6 @@
+{
+  "appId": "com.irondominion.game",
+  "appName": "Iron Dominion",
+  "webDir": "dist",
+  "android": { "allowMixedContent": false }
+}

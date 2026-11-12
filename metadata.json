@@ -1,0 +1,8 @@
+{
+  "name": "Iron Dominion: Mobile RTS Warfare",
+  "description": "Tactical real-time strategy military warfare optimized for mobile. Command strike forces, build fortified bases, manage economy, and dominate the battlefield.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
