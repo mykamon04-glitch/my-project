@@ -23,6 +23,7 @@ import {
 import { CAMPAIGN_MISSIONS } from '../data/gameData';
 import { GameEngine } from '../game/engine';
 import { AIDifficulty, GameMode } from '../types/game';
+import { MatchResults } from './MatchResults';
 
 interface GameModalProps {
   engine: GameEngine;
@@ -30,6 +31,7 @@ interface GameModalProps {
   onClose: () => void;
   onStartNewGame: (mode: GameMode, difficulty: AIDifficulty, mapId: string, campaignId?: number) => void;
   onRestartCurrent: () => void;
+  onMainMenu?: () => void;
 }
 
 export const GameModal: React.FC<GameModalProps> = ({
@@ -38,6 +40,7 @@ export const GameModal: React.FC<GameModalProps> = ({
   onClose,
   onStartNewGame,
   onRestartCurrent,
+  onMainMenu,
 }) => {
   const [, setForceUpdate] = useState(0);
 
@@ -70,100 +73,20 @@ export const GameModal: React.FC<GameModalProps> = ({
           </button>
         )}
 
-        {/* --- VICTORY SCREEN --- */}
-        {modalType === 'victory' && (
-          <div className="text-center">
-            <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-emerald-500/10 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-              <Trophy className="w-8 h-8" />
-            </div>
-            <h2 className="text-2xl font-display font-bold text-emerald-400 tracking-wide uppercase">
-              Sector Secured — Victory!
-            </h2>
-            <p className="text-xs text-slate-400 mt-1">
-              Hostile forces have been thoroughly routed and all key objectives secured.
-            </p>
-
-            <div className="mt-4 p-3 bg-slate-950/60 border border-slate-800 rounded-lg grid grid-cols-2 gap-3 text-xs font-mono-numbers text-left">
-              <div>
-                <span className="text-slate-400 block text-[10px]">COMBAT TIME</span>
-                <span className="text-slate-200 font-bold">
-                  {Math.floor(engine.gameTime / 60)}m {Math.floor(engine.gameTime % 60)}s
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px]">CREDITS ACCRUED</span>
-                <span className="text-amber-400 font-bold">
-                  ${Math.floor(engine.economy.credits).toLocaleString()}
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px]">SURVIVING TROOPS</span>
-                <span className="text-emerald-400 font-bold">
-                  {engine.units.filter(u => u.faction === 'player').length}
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px]">TECHS RESEARCHED</span>
-                <span className="text-sky-400 font-bold">{engine.unlockedTechs.size}</span>
-              </div>
-            </div>
-
-            <div className="mt-6 flex items-center justify-center gap-3">
-              <button
-                onClick={onRestartCurrent}
-                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-display font-semibold transition-colors flex items-center gap-1.5"
-              >
-                <RotateCcw className="w-3.5 h-3.5" /> REPLAY MATCH
-              </button>
-              {engine.mode === 'campaign' && engine.currentMission && engine.currentMission.id < 3 ? (
-                <button
-                  onClick={() =>
-                    onStartNewGame('campaign', engine.difficulty, 'river_delta', engine.currentMission!.id + 1)
-                  }
-                  className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-display font-bold tracking-wide transition-colors flex items-center gap-1.5"
-                >
-                  NEXT OPERATION <Play className="w-3.5 h-3.5 fill-current" />
-                </button>
-              ) : (
-                <button
-                  onClick={onClose}
-                  className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-display font-bold tracking-wide transition-colors"
-                >
-                  RETURN TO BASE
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* --- DEFEAT SCREEN --- */}
-        {modalType === 'defeat' && (
-          <div className="text-center">
-            <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-rose-500/10 border border-rose-500/40 flex items-center justify-center text-rose-400">
-              <Skull className="w-8 h-8" />
-            </div>
-            <h2 className="text-2xl font-display font-bold text-rose-400 tracking-wide uppercase">
-              Command Base Fallen
-            </h2>
-            <p className="text-xs text-slate-400 mt-1">
-              Your Command Center was demolished or your forces were overwhelmed by enemy fire.
-            </p>
-
-            <div className="mt-6 flex items-center justify-center gap-3">
-              <button
-                onClick={onRestartCurrent}
-                className="px-5 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-display font-bold tracking-wide transition-colors flex items-center gap-1.5 shadow-lg"
-              >
-                <RotateCcw className="w-4 h-4" /> RETRY MISSION
-              </button>
-              <button
-                onClick={onClose}
-                className="px-4 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-display font-semibold transition-colors"
-              >
-                CONTINUE EXPLORING
-              </button>
-            </div>
-          </div>
+        {/* --- RESULTS (V12): decided once by the engine, shown after the HQ destruction sequence --- */}
+        {(modalType === 'victory' || modalType === 'defeat') && (
+          <MatchResults
+            engine={engine}
+            outcome={modalType}
+            onPlayAgain={onRestartCurrent}
+            onMainMenu={onMainMenu ?? onClose}
+            onViewBattlefield={onClose}
+            onNextOperation={
+              modalType === 'victory' && engine.mode === 'campaign' && engine.currentMission && engine.currentMission.id < 3
+                ? () => onStartNewGame('campaign', engine.difficulty, 'river_delta', engine.currentMission!.id + 1)
+                : undefined
+            }
+          />
         )}
 
         {/* --- MISSION BRIEFING SCREEN --- */}

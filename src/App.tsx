@@ -46,6 +46,8 @@ export default function App() {
   const [inMainMenu, setInMainMenu] = useState<boolean>(true);
   const [is3DMode, setIs3DMode] = useState<boolean>(false);
   const [modalType, setModalType] = useState<'victory' | 'defeat' | 'briefing' | 'settings' | null>(null);
+  // V12: outcome of a finished match (battlefield stays viewable, read-only, until a new match starts)
+  const [matchOver, setMatchOver] = useState<'victory' | 'defeat' | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isSaveLoadOpen, setIsSaveLoadOpen] = useState<boolean>(false);
   const [isAdvisorOpen, setIsAdvisorOpen] = useState<boolean>(false);
@@ -186,6 +188,7 @@ export default function App() {
       setIsNukeTargeting(false);
       setActiveInteractionMode('NORMAL');
       setInMainMenu(false);
+      setMatchOver(null);
 
       if (mode === 'campaign') {
         setModalType('briefing');
@@ -368,6 +371,7 @@ export default function App() {
 
     const engine = new GameEngine(saveData.mode, 'normal');
     const ok = engine.importSaveData(saveData);
+    setMatchOver(null);
     if (ok) {
       engineRef.current = engine;
       if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')) { (window as any).__engine = engine; (window as any).__camRef = cameraRef; (window as any).__tcamRef = targetCameraRef; } // test hook, only with ?debug
@@ -524,14 +528,16 @@ export default function App() {
         // Engine simulation update
         engine.update(dt);
 
-        if (engine.gameStatus === 'victory' && modalTypeRef.current !== 'victory') {
-          modalTypeRef.current = 'victory';
-          setModalType('victory');
-          recordMatchProgress({ won: true, campaignCleared: engine.mode === 'campaign' });
-        } else if (engine.gameStatus === 'defeat' && modalTypeRef.current !== 'defeat') {
-          modalTypeRef.current = 'defeat';
-          setModalType('defeat');
-          recordMatchProgress({ lost: true });
+        // Match outcome (V12): the engine decides it once; the results screen opens once, after the destruction
+        // sequence. Closing it (VIEW BATTLEFIELD) never re-opens it or records the result again.
+        const outcome = engine.consumeMatchOutcome();
+        if (outcome) {
+          modalTypeRef.current = outcome.outcome;
+          setModalType(outcome.outcome);
+          setMatchOver(outcome.outcome);
+          activePlacementRef.current = null;
+          if (outcome.outcome === 'victory') recordMatchProgress({ won: true, campaignCleared: engine.mode === 'campaign' });
+          else recordMatchProgress({ lost: true });
         }
 
         // Battlefield Rendering (3D Three.js PBR or 2D Classic)
@@ -1993,14 +1999,31 @@ export default function App() {
             </>
           )}
 
+          {/* V12: finished match, results closed -> read-only battlefield with a way back to the results */}
+          {engine && engine.matchEnd && engine.matchPhase === 'results' && !modalType && (
+            <button
+              data-testid="match-over-banner"
+              onClick={() => { const o = engine.matchEnd!.outcome; modalTypeRef.current = o; setModalType(o); }}
+              className="fixed left-1/2 -translate-x-1/2 z-40 px-3 h-8 rounded-full bg-[#0E1620]/92 border border-[#2a3b4f] text-[11px] font-display font-semibold tracking-wider flex items-center gap-2 shadow-lg"
+              style={{ top: 'calc(env(safe-area-inset-top, 0px) + 64px)' }}
+            >
+              <span className={engine.matchEnd.outcome === 'victory' ? 'text-[#3FBF8F]' : 'text-[#E06A5F]'}>
+                {engine.matchEnd.outcome === 'victory' ? 'VICTORY' : 'DEFEAT'}
+              </span>
+              <span className="text-slate-400">MATCH OVER · READ-ONLY</span>
+              <span className="text-slate-100">VIEW RESULTS</span>
+            </button>
+          )}
+
           {/* GAME MODAL (Victory, Defeat, Briefing, Settings) */}
           {engine && (
             <GameModal
               engine={engine}
               modalType={modalType}
-              onClose={() => setModalType(null)}
+              onClose={() => { modalTypeRef.current = null; setModalType(null); }}
               onStartNewGame={startNewGame}
               onRestartCurrent={restartCurrentGame}
+              onMainMenu={() => { modalTypeRef.current = null; setModalType(null); setInMainMenu(true); }}
             />
           )}
 

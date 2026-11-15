@@ -730,3 +730,29 @@ export interface MatchSetupConfig {
   victoryCondition: 'annihilation' | 'destroy_hq' | 'domination';
   gameSpeed: number;
 }
+
+// ───────────── Match state (V12) ─────────────
+export type MatchPhase = 'preparing' | 'playing' | 'victory' | 'defeat' | 'results';
+export interface MatchEnd {
+  outcome: 'victory' | 'defeat';
+  reason: string;
+  at: number;            // game time the outcome was decided
+  x: number; y: number;  // where the losing headquarters fell
+  loser: Faction;
+  blasts?: number;       // destruction-sequence progress (visual)
+}
+export interface MatchStats {
+  duration: number;
+  enemyUnitsKilled: number;
+  friendlyUnitsLost: number;
+  enemyBuildingsDestroyed: number;
+  buildingsConstructed: number;
+  buildingsLost: number;
+  creditsEarned: number;
+  damageDealt: number;
+  damageTaken: number;
+}
+export const emptyMatchStats = (): MatchStats => ({
+  duration: 0, enemyUnitsKilled: 0, friendlyUnitsLost: 0, enemyBuildingsDestroyed: 0, buildingsConstructed: 0,
+  buildingsLost: 0, creditsEarned: 0, damageDealt: 0, damageTaken: 0,
+});

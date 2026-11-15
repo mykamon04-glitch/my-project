@@ -85,7 +85,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   const [startingArmy, setStartingArmy] = useState<'minimal' | 'standard' | 'strike_force'>('standard');
   const [startingTech, setStartingTech] = useState<'basic' | 'advanced' | 'all'>('basic');
   const [fogOfWar, setFogOfWar] = useState<boolean>(true);
-  const [victoryCondition, setVictoryCondition] = useState<'annihilation' | 'destroy_hq' | 'domination'>('annihilation');
+  const [victoryCondition, setVictoryCondition] = useState<'annihilation' | 'destroy_hq' | 'domination'>('destroy_hq');
   const [gameSpeed, setGameSpeed] = useState<number>(1.0);
 
   // Sub-Modals

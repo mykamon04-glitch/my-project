@@ -7,6 +7,10 @@ import { bodyHeight, muzzleOffset } from './units/models';
 import { soundEngine } from '../audio/soundEngine';
 import { BUILDING_CONFIGS, CAMPAIGN_MISSIONS, MAP_PRESETS, TECH_UPGRADES, UNIT_CONFIGS } from '../data/gameData';
 import {
+  emptyMatchStats,
+  MatchEnd,
+  MatchPhase,
+  MatchStats,
   AIDifficulty,
   Building,
   BuildingType,
@@ -215,13 +219,22 @@ export class GameEngine {
   public nextWaveTimer: number = 30;
   public gameStatus: 'playing' | 'victory' | 'defeat' = 'playing';
 
+  // Match state machine (V12): PREPARING -> PLAYING -> VICTORY / DEFEAT (destruction sequence) -> RESULTS.
+  // `gameStatus` is the authoritative outcome; it is decided once, in checkMatchEndConditions, from the real entities.
+  public matchPhase: MatchPhase = 'preparing';
+  public matchEnd: MatchEnd | null = null;
+  public matchStats: MatchStats = emptyMatchStats();
+  public static readonly END_SEQUENCE_SECONDS = 3;
+  private hqLostAt: Partial<Record<Faction, { t: number; x: number; y: number }>> = {};
+  private outcomeAnnounced = false;
+
   // Weather & Lighting
   public weather: WeatherType = 'clear';
   public dayNightCycleEnabled: boolean = true;
   public dayNightPhase: number = 0;
 
   // Victory Condition & Match Setup
-  public victoryCondition: 'annihilation' | 'destroy_hq' | 'domination' = 'annihilation';
+  public victoryCondition: 'annihilation' | 'destroy_hq' | 'domination' = 'destroy_hq';
   public matchConfig?: Partial<MatchSetupConfig>;
 
   // Settings
@@ -320,6 +333,11 @@ export class GameEngine {
     this.pings = [];
     this.gameTime = 0;
     this.gameStatus = 'playing';
+    this.matchPhase = 'preparing';
+    this.matchEnd = null;
+    this.matchStats = emptyMatchStats();
+    this.hqLostAt = {};
+    this.outcomeAnnounced = false;
 
     // 1. Spawn Player Headquarters
     const pSpawn = this.mapData.playerSpawn;
@@ -437,10 +455,23 @@ export class GameEngine {
 
   // --- Main Tick ---
   public update(deltaTime: number) {
-    if (this.isPaused || this.gameStatus !== 'playing') return;
+    if (this.isPaused || this.matchPhase === 'results') return;
+    if (this.matchPhase === 'preparing') this.matchPhase = 'playing';
 
     const dt = Math.min(deltaTime * this.gameSpeed, 0.1);
     this.gameTime += dt;
+
+    // Outcome decided: play the destruction sequence (units, shots and effects settle; no economy, AI, production or
+    // construction), then freeze the simulation for the results screen.
+    if (this.matchEnd) {
+      this.removeDestroyedBuildings();
+      this.updateUnits(dt);
+      this.updateProjectiles(dt);
+      this.updateVisualEffects(dt);
+      this.updateEndSequence();
+      if (this.gameTime - this.matchEnd.at >= GameEngine.END_SEQUENCE_SECONDS) this.matchPhase = 'results';
+      return;
+    }
 
     // Decay Screen Shake
     if (this.screenShakeIntensity > 0) {
@@ -552,6 +583,8 @@ export class GameEngine {
 
       if (u.hp <= 0) {
         const cat = UNIT_CONFIGS[u.type].category;
+        if (u.faction === 'enemy') this.matchStats.enemyUnitsKilled++;
+        else if (u.faction === 'player') this.matchStats.friendlyUnitsLost++;
         this.wreckages.push(createWreckage(u)); // visual record: casualty, burnt-out vehicle or crashed aircraft
         if (cat === 'infantry') this.particles.push(...createCasualtyParticles(u.x, u.y));
         else this.particles.push(...createExplosionParticles(u.x, u.y, cat === 'vehicle'));
@@ -901,6 +934,7 @@ export class GameEngine {
   }
 
   private handleUnitCombat(u: Unit, dt: number) {
+    if (this.matchEnd && u.faction === this.matchEnd.loser) { u.isAttacking = false; return; }
     // Unarmed support units (medic, medical APC, logistics truck: damage 0) never acquire targets or fire.
     if (!(UNIT_CONFIGS[u.type].damage > 0)) {
       u.targetUnitId = undefined;
@@ -1208,6 +1242,9 @@ export class GameEngine {
 
       if (b.hp <= 0) {
         this.particles.push(...createExplosionParticles(b.pixelX, b.pixelY, true));
+        if (b.type === 'headquarters' && !this.hqLostAt[b.faction]) this.hqLostAt[b.faction] = { t: this.gameTime, x: b.pixelX, y: b.pixelY };
+        if (b.faction === 'enemy' && b.constructionProgress >= 1) this.matchStats.enemyBuildingsDestroyed++;
+        if (b.faction === 'player' && b.constructionProgress >= 1) this.matchStats.buildingsLost++;
         this.addScreenShake(0.6);
         soundEngine.playExplosion(true);
         if (b.faction === 'player' && b.constructionProgress >= 1) {
@@ -1229,6 +1266,7 @@ export class GameEngine {
         if (b.constructionProgress >= 1.0) {
           b.isUnderConstruction = false;
           if (b.faction === 'player') {
+            this.matchStats.buildingsConstructed++;
             soundEngine.playComplete();
             this.floatingTexts.push({
               id: Math.random().toString(),
@@ -1487,6 +1525,7 @@ export class GameEngine {
               u.armor
             );
             u.hp -= dmg;
+            this.tallyDamage(p.faction, dmg);
             if (this.settings.showDamageNumbers) {
               this.floatingTexts.push({
                 id: Math.random().toString(),
@@ -1508,6 +1547,7 @@ export class GameEngine {
           if (d <= p.splashRadius + 20) {
             const dmg = calculateDamage(p.type, 'vehicle', 'building', p.damage, b.armor);
             b.hp -= dmg;
+            this.tallyDamage(p.faction, dmg);
           }
         }
       });
@@ -1517,6 +1557,7 @@ export class GameEngine {
         if (u) {
           const dmg = calculateDamage(p.type, 'infantry', UNIT_CONFIGS[u.type].category, p.damage, u.armor);
           u.hp -= dmg;
+            this.tallyDamage(p.faction, dmg);
           if (this.settings.showDamageNumbers) {
             this.floatingTexts.push({
               id: Math.random().toString(),
@@ -1534,6 +1575,7 @@ export class GameEngine {
         if (b) {
           const dmg = calculateDamage(p.type, 'infantry', 'building', p.damage, b.armor);
           b.hp -= dmg;
+            this.tallyDamage(p.faction, dmg);
         }
       }
     }
@@ -1612,6 +1654,7 @@ export class GameEngine {
     this.economy.populationCap = bonusPopCap;
 
     this.economy.credits += incomePerSec * dt;
+    if (incomePerSec > 0) this.matchStats.creditsEarned += incomePerSec * dt;
 
     const friendlyUnits = this.units.filter(u => u.faction === 'player' && u.hp > 0);
     this.economy.population = friendlyUnits.length;
@@ -1727,50 +1770,113 @@ export class GameEngine {
     }
   }
 
+  private tallyDamage(faction: Faction, dmg: number) {
+    if (!(dmg > 0)) return;
+    if (faction === 'player') this.matchStats.damageDealt += dmg;
+    else if (faction === 'enemy') this.matchStats.damageTaken += dmg;
+  }
+
   // --- Match End Conditions ---
+  /**
+   * Decides the match outcome exactly once, from the authoritative entities (HQ buildings removed by updateBuildings,
+   * living units). Rules per mode:
+   *   skirmish / custom: victory = enemy HQ destroyed ('destroy_hq', default) or enemy HQ and army gone ('annihilation' /
+   *     'domination'); defeat = player HQ destroyed ('annihilation': HQ and army gone).
+   *   campaign: victory = all mission objectives; defeat = player HQ destroyed.
+   *   defense: survive the waves; defeat = player HQ destroyed.
+   *   sandbox: no victory; defeat only when the HQ and every unit are gone (original rule).
+   * If both headquarters fall in the same simulation step the result is DEFEAT (the player's base was lost).
+   */
   private checkMatchEndConditions() {
-    const playerHQ = this.buildings.find(b => b.type === 'headquarters' && b.faction === 'player' && b.hp > 0);
-    const playerUnits = this.units.filter(u => u.faction === 'player' && u.hp > 0);
+    if (this.matchEnd) return;
+    const alive = (f: Faction) => this.units.some(u => u.faction === f && u.hp > 0);
+    // An HQ counts as lost once the building update has processed its destruction (removed it, recorded where it fell).
+    const hq = (f: Faction) => this.buildings.some(b => b.type === 'headquarters' && b.faction === f);
+    const versus = this.mode === 'skirmish' || this.mode === 'custom';
+    const armyRule = versus && this.victoryCondition !== 'destroy_hq';
 
-    if (!playerHQ && playerUnits.length === 0) {
-      this.gameStatus = 'defeat';
-      soundEngine.playAlarm();
-      return;
-    }
+    const playerHQ = hq('player');
+    const playerLost = this.mode === 'sandbox' || (versus && armyRule) ? !playerHQ && !alive('player') : !playerHQ;
 
-    if (this.mode === 'skirmish' || this.mode === 'custom') {
-      const enemyHQ = this.buildings.find(b => b.type === 'headquarters' && b.faction === 'enemy' && b.hp > 0);
-      const enemyUnits = this.units.filter(u => u.faction === 'enemy' && u.hp > 0);
-      const isVictoryAchieved =
-        this.victoryCondition === 'destroy_hq'
-          ? !enemyHQ
-          : !enemyHQ && enemyUnits.length === 0;
-      if (isVictoryAchieved) {
-        this.gameStatus = 'victory';
-        soundEngine.playComplete();
-      }
+    let playerWon = false;
+    if (versus) {
+      const enemyHQ = hq('enemy');
+      playerWon = armyRule ? !enemyHQ && !alive('enemy') : !enemyHQ;
     } else if (this.mode === 'campaign' && this.currentMission) {
       const hasPower = this.buildings.some(b => b.type === 'power_plant' && b.faction === 'player' && b.hp > 0);
       const hasBarracks = this.buildings.some(b => b.type === 'barracks' && b.faction === 'player' && b.hp > 0);
       const infantryCount = this.units.filter(u => u.faction === 'player' && UNIT_CONFIGS[u.type].category === 'infantry').length;
-      const enemyHQ = this.buildings.find(b => b.type === 'headquarters' && b.faction === 'enemy' && b.hp > 0);
-      const enemyUnits = this.units.filter(u => u.faction === 'enemy' && u.hp > 0);
-
+      const enemyHQ = hq('enemy');
+      const enemyArmy = alive('enemy');
       this.currentMission.objectives.forEach(obj => {
         if (obj.id === 'build_power' && hasPower) obj.completed = true;
         if (obj.id === 'build_barracks' && hasBarracks) obj.completed = true;
         if (obj.id === 'recruit_squad' && infantryCount >= 6) obj.completed = true;
-        if (obj.id === 'destroy_enemy' && !enemyHQ && enemyUnits.length === 0) obj.completed = true;
+        if (obj.id === 'destroy_enemy' && !enemyHQ && !enemyArmy) obj.completed = true;
         if (obj.id === 'destroy_hq' && !enemyHQ) obj.completed = true;
       });
-
-      const allDone = this.currentMission.objectives.every(o => o.completed);
-      if (allDone) {
-        this.gameStatus = 'victory';
-        soundEngine.playComplete();
-      }
+      playerWon = this.currentMission.objectives.every(o => o.completed);
     }
+
+    if (playerLost) this.endMatch('defeat', 'YOUR HEADQUARTERS HAS FALLEN');
+    else if (playerWon) this.endMatch('victory', versus && !armyRule ? 'ENEMY HEADQUARTERS DESTROYED' : this.mode === 'campaign' ? 'MISSION ACCOMPLISHED' : 'ENEMY FORCES ELIMINATED');
   }
+
+  /** Records the outcome (once), stops the losing side and starts the destruction sequence. */
+  private endMatch(outcome: 'victory' | 'defeat', reason: string) {
+    if (this.matchEnd) return;
+    const loser: Faction = outcome === 'victory' ? 'enemy' : 'player';
+    const spot = this.hqLostAt[loser] ?? (loser === 'enemy' ? this.mapData.enemySpawn : this.mapData.playerSpawn);
+    this.matchEnd = { outcome, reason, at: this.gameTime, x: spot.x, y: spot.y, loser };
+    this.gameStatus = outcome;
+    this.matchPhase = outcome;
+    this.matchStats.duration = this.gameTime;
+    // Cancel everything the losing side had pending: production, construction, orders and attacks.
+    for (const b of this.buildings) if (b.faction === loser) { b.productionQueue = []; b.targetUnitId = undefined; }
+    for (const u of this.units) {
+      if (u.faction !== loser) continue;
+      u.path = []; u.isMoving = false; u.isAttacking = false;
+      u.targetUnitId = undefined; u.targetBuildingId = undefined; u.command = 'idle'; u.stance = 'hold_fire';
+    }
+    this.projectiles = this.projectiles.filter(p => p.faction !== loser);
+    if (outcome === 'victory') soundEngine.playComplete(); else soundEngine.playAlarm();
+  }
+
+  /** Destroyed structures still collapse during the destruction sequence (no construction or production runs). */
+  private removeDestroyedBuildings() {
+    let changed = false;
+    for (let i = this.buildings.length - 1; i >= 0; i--) {
+      const b = this.buildings[i];
+      if (b.hp > 0) continue;
+      this.particles.push(...createExplosionParticles(b.pixelX, b.pixelY, true));
+      if (b.faction === 'enemy' && b.constructionProgress >= 1) this.matchStats.enemyBuildingsDestroyed++;
+      if (b.faction === 'player' && b.constructionProgress >= 1) this.matchStats.buildingsLost++;
+      this.buildings.splice(i, 1);
+      changed = true;
+    }
+    if (changed) this.pathGrid.rebuild(this.mapData, this.buildings);
+  }
+
+  /** Secondary detonations at the fallen headquarters during the destruction sequence (visual only). */
+  private updateEndSequence() {
+    const m = this.matchEnd;
+    if (!m) return;
+    const k = Math.floor((this.gameTime - m.at) / 0.45);
+    if (k > 5 || k <= (m.blasts ?? -1)) return;
+    m.blasts = k;
+    const r = 18 + k * 6;
+    this.particles.push(...createExplosionParticles(m.x + (Math.random() - 0.5) * r * 2, m.y + (Math.random() - 0.5) * r, k % 2 === 0));
+  }
+
+  /** The finished match outcome, returned exactly once (when the results screen is due). */
+  public consumeMatchOutcome(): MatchEnd | null {
+    if (this.matchPhase !== 'results' || !this.matchEnd || this.outcomeAnnounced) return null;
+    this.outcomeAnnounced = true;
+    return this.matchEnd;
+  }
+
+  /** True while the player may give orders (false once the outcome is decided: the battlefield is read-only). */
+  public get commandsEnabled(): boolean { return !this.matchEnd; }
 
   // --- Public Player Actions ---
 
@@ -1932,6 +2038,7 @@ export class GameEngine {
     faction: Faction = 'player',
     rotation: number = 0
   ): Building | null {
+    if (this.matchEnd) return null; // V12: battlefield is read-only once the outcome is decided
     const config = BUILDING_CONFIGS[type];
     const isRotated = rotation === 90 || rotation === 270;
     const bw = isRotated ? config.size.height : config.size.width;
@@ -1984,6 +2091,7 @@ export class GameEngine {
 
   // Auto Place: One-tap intelligent automatic construction at optimal site
   public autoPlaceBuilding(type: BuildingType, rotation: number = 0): Building | null {
+    if (this.matchEnd) return null; // V12: battlefield is read-only once the outcome is decided
     const recs = this.getRecommendedBuildingPositions(type, rotation);
     if (recs.length === 0) {
       soundEngine.playError();
@@ -2007,6 +2115,7 @@ export class GameEngine {
 
   // --- Rally Point Configuration ---
   public setBuildingRallyPoint(buildingId: string, worldPos: Vector2) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const b = this.buildings.find(o => o.id === buildingId);
     if (b) {
       b.rallyPoint = { x: worldPos.x, y: worldPos.y };
@@ -3095,6 +3204,7 @@ export class GameEngine {
   }
 
   public queueUnitProduction(buildingId: string, unitType: UnitType): boolean {
+    if (this.matchEnd) return false; // V12: battlefield is read-only once the outcome is decided
     const b = this.buildings.find(o => o.id === buildingId);
     if (!b || b.hp <= 0 || b.constructionProgress < 1.0) return false;
 
@@ -3123,6 +3233,7 @@ export class GameEngine {
   }
 
   public cancelUnitProduction(buildingId: string, queueIndex: number): boolean {
+    if (this.matchEnd) return false; // V12: battlefield is read-only once the outcome is decided
     const b = this.buildings.find(o => o.id === buildingId);
     if (!b || !b.productionQueue[queueIndex]) return false;
 
@@ -3428,6 +3539,7 @@ export class GameEngine {
   }
 
   public toggleBuildingRepair(buildingId: string) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const b = this.buildings.find(o => o.id === buildingId);
     if (b) {
       b.isRepairing = !b.isRepairing;
@@ -3436,6 +3548,7 @@ export class GameEngine {
   }
 
   public demolishBuilding(buildingId: string) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const bIdx = this.buildings.findIndex(o => o.id === buildingId);
     if (bIdx >= 0) {
       const b = this.buildings[bIdx];
@@ -3449,6 +3562,7 @@ export class GameEngine {
   }
 
   public researchTech(techId: string): boolean {
+    if (this.matchEnd) return false; // V12: battlefield is read-only once the outcome is decided
     if (this.unlockedTechs.has(techId) || this.researchInProgress) return false;
     const tech = TECH_UPGRADES.find(t => t.id === techId);
     if (!tech || this.economy.credits < tech.cost) return false;
@@ -3469,6 +3583,7 @@ export class GameEngine {
     isAttackMove: boolean,
     formation: SquadFormation = this.currentFormation
   ) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const selectedUnits = this.units.filter(u => unitIds.includes(u.id) && u.hp > 0);
     if (selectedUnits.length === 0) return;
 
@@ -3554,11 +3669,13 @@ export class GameEngine {
   }
 
   public issueMove(unitIds: string[], target: Vector2, formation: SquadFormation = this.currentFormation) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     this.issueUnitGroupCommand(unitIds, target, false, formation);
   }
 
   // Targeted Attack Order (Operates on actual enemy entities: units or buildings)
   public issueAttack(unitIds: string[], targetUnitId?: string, targetBuildingId?: string) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const selectedUnits = this.units.filter(u => unitIds.includes(u.id));
     if (selectedUnits.length === 0) return;
 
@@ -3612,6 +3729,7 @@ export class GameEngine {
 
   // Defend Area Command (Holds ground and defends territory within visual radius)
   public issueDefend(unitIds: string[], targetLocation?: Vector2) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const selectedUnits = this.units.filter(u => unitIds.includes(u.id));
     if (selectedUnits.length === 0) return;
 
@@ -3646,6 +3764,7 @@ export class GameEngine {
 
   // Guard Friendly Unit or Structure Command
   public issueGuard(unitIds: string[], targetFriendlyId?: string) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const selectedUnits = this.units.filter(u => unitIds.includes(u.id));
     if (selectedUnits.length === 0) return;
 
@@ -3695,6 +3814,7 @@ export class GameEngine {
 
   // Patrol Command (Move between current position and assigned waypoint)
   public issuePatrol(unitIds: string[], targetWaypoint?: Vector2) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const selectedUnits = this.units.filter(u => unitIds.includes(u.id));
     if (selectedUnits.length === 0) return;
 
@@ -3727,6 +3847,7 @@ export class GameEngine {
 
   // Hold Position Command (Cease movement, attack targets within range without pursuing)
   public issueHold(unitIds: string[]) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const selectedUnits = this.units.filter(u => unitIds.includes(u.id));
     if (selectedUnits.length === 0) return;
 
@@ -3742,6 +3863,7 @@ export class GameEngine {
 
   // Stop Command (Immediately halt all movement and cancel current orders)
   public issueStop(unitIds: string[]) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const selectedUnits = this.units.filter(u => unitIds.includes(u.id));
     if (selectedUnits.length === 0) return;
 
@@ -3762,6 +3884,7 @@ export class GameEngine {
 
   // Tactical Smoke & Fallback Retreat Command
   public issueRetreat(unitIds: string[]) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const selectedUnits = this.units.filter(u => unitIds.includes(u.id));
     if (selectedUnits.length === 0) return;
 
@@ -3781,6 +3904,7 @@ export class GameEngine {
 
   // Follow & Escort Command (Maintains escort proximity with designated ally or lead unit)
   public issueFollow(unitIds: string[], targetFriendlyId?: string) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const selectedUnits = this.units.filter(u => unitIds.includes(u.id));
     if (selectedUnits.length === 0) return;
 
@@ -3823,6 +3947,7 @@ export class GameEngine {
 
   // Targeted or Autonomous Field Healing (Medics & Medical APCs)
   public issueHeal(unitIds: string[], targetUnitId?: string) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const selectedUnits = this.units.filter(u => unitIds.includes(u.id));
     const medics = selectedUnits.filter(u => u.type === 'medic' || u.type === 'medical_apc' || UNIT_CONFIGS[u.type]?.canHeal);
     if (medics.length === 0) return;
@@ -3863,6 +3988,7 @@ export class GameEngine {
 
   // Targeted or Autonomous Field Repairs (Combat Engineers)
   public issueRepair(unitIds: string[], targetEntityId?: string) {
+    if (this.matchEnd) return; // V12: battlefield is read-only once the outcome is decided
     const selectedUnits = this.units.filter(u => unitIds.includes(u.id));
     const engineers = selectedUnits.filter(u => u.type === 'engineer' || UNIT_CONFIGS[u.type]?.canRepair);
     if (engineers.length === 0) return;
@@ -4180,6 +4306,7 @@ export class GameEngine {
   }
 
   public launchTacticalNuke(target: Vector2): boolean {
+    if (this.matchEnd) return false; // V12: battlefield is read-only once the outcome is decided
     if (!this.unlockedTechs.has('tactical_nuke') && this.mode !== 'sandbox') return false;
     soundEngine.playAlarm();
     this.addScreenShake(1.5);
@@ -4235,6 +4362,8 @@ export class GameEngine {
       aiMedicalEnabled: this.aiMedicalEnabled,
       aiRepairEnabled: this.aiRepairEnabled,
       aiEconomyEnabled: this.aiEconomyEnabled,
+      victoryCondition: this.victoryCondition,
+      matchStats: this.matchStats,
       units: this.units.map(u => ({
         id: u.id,
         type: u.type,
@@ -4305,6 +4434,13 @@ export class GameEngine {
       if (typeof state.aiMedicalEnabled === 'boolean') this.aiMedicalEnabled = state.aiMedicalEnabled;
       if (typeof state.aiRepairEnabled === 'boolean') this.aiRepairEnabled = state.aiRepairEnabled;
       if (typeof state.aiEconomyEnabled === 'boolean') this.aiEconomyEnabled = state.aiEconomyEnabled;
+      if (state.victoryCondition) this.victoryCondition = state.victoryCondition;
+      this.matchStats = { ...emptyMatchStats(), ...(state.matchStats ?? {}) };
+      this.matchEnd = null;
+      this.matchPhase = 'playing';
+      this.gameStatus = 'playing';
+      this.hqLostAt = {};
+      this.outcomeAnnounced = false;
 
       // Reconstruct units
       this.units = state.units.map((u: Partial<Unit>) => {
