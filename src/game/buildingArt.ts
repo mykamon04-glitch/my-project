@@ -27,7 +27,7 @@ import type { Building, BuildingType } from '../types/game';
 type Ctx = CanvasRenderingContext2D;
 export type Faction = 'player' | 'enemy';
 
-export const K = 0.4; // horizontal shift per unit of height (width of the visible east wall)
+export const K = 0; // horizontal shift per unit of height (width of the visible east wall)
 
 /** Highest point of each design above the ground, in px. */
 export const ART_HEIGHT: Record<BuildingType, number> = {

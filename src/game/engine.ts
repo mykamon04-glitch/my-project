@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { bodyHeight, muzzleOffset } from './units/models';
 import { soundEngine } from '../audio/soundEngine';
 import { BUILDING_CONFIGS, CAMPAIGN_MISSIONS, MAP_PRESETS, TECH_UPGRADES, UNIT_CONFIGS } from '../data/gameData';
 import {
@@ -53,6 +54,7 @@ import {
   createDustParticles,
   createEngineSmokeParticles,
   createExplosionParticles,
+  createCasualtyParticles,
   createHealParticles,
   createRepairParticles,
   createMuzzleFlashParticles,
@@ -549,10 +551,10 @@ export class GameEngine {
       const u = this.units[i];
 
       if (u.hp <= 0) {
-        if (UNIT_CONFIGS[u.type].category === 'vehicle') {
-          this.wreckages.push(createWreckage(u));
-        }
-        this.particles.push(...createExplosionParticles(u.x, u.y, UNIT_CONFIGS[u.type].category === 'vehicle'));
+        const cat = UNIT_CONFIGS[u.type].category;
+        this.wreckages.push(createWreckage(u)); // visual record: casualty, burnt-out vehicle or crashed aircraft
+        if (cat === 'infantry') this.particles.push(...createCasualtyParticles(u.x, u.y));
+        else this.particles.push(...createExplosionParticles(u.x, u.y, cat === 'vehicle'));
         this.addScreenShake(UNIT_CONFIGS[u.type].category === 'vehicle' ? 0.4 : 0.15);
         soundEngine.playExplosion(UNIT_CONFIGS[u.type].category === 'vehicle');
         this.units.splice(i, 1);
@@ -621,6 +623,7 @@ export class GameEngine {
 
         if (bestTarget) {
           u.healCooldown = this.gameTime;
+          u.workAngle = Math.atan2(bestTarget.y - u.y, bestTarget.x - u.x); // visual: face the patient / job
           // Strict max HP clamping — never exceed maxHp
           const actualHealed = Math.min(healAmount, bestTarget.maxHp - bestTarget.hp);
           bestTarget.hp = Math.min(bestTarget.maxHp, bestTarget.hp + actualHealed);
@@ -657,6 +660,7 @@ export class GameEngine {
 
         if (damagedVehicle) {
           u.healCooldown = this.gameTime;
+          u.workAngle = Math.atan2(damagedVehicle.y - u.y, damagedVehicle.x - u.x); // visual: face the patient / job
           const actualRepaired = Math.min(repairAmount, damagedVehicle.maxHp - damagedVehicle.hp);
           damagedVehicle.hp = Math.min(damagedVehicle.maxHp, damagedVehicle.hp + actualRepaired);
           this.particles.push(...createRepairParticles(damagedVehicle.x, damagedVehicle.y));
@@ -682,6 +686,7 @@ export class GameEngine {
           );
           if (damagedBuilding) {
             u.healCooldown = this.gameTime;
+          u.workAngle = Math.atan2(damagedBuilding.pixelY - u.y, damagedBuilding.pixelX - u.x); // visual: face the patient / job
             const actualRepaired = Math.min(repairAmount, damagedBuilding.maxHp - damagedBuilding.hp);
             damagedBuilding.hp = Math.min(damagedBuilding.maxHp, damagedBuilding.hp + actualRepaired);
             this.particles.push(...createRepairParticles(damagedBuilding.pixelX, damagedBuilding.pixelY));
@@ -896,6 +901,13 @@ export class GameEngine {
   }
 
   private handleUnitCombat(u: Unit, dt: number) {
+    // Unarmed support units (medic, medical APC, logistics truck: damage 0) never acquire targets or fire.
+    if (!(UNIT_CONFIGS[u.type].damage > 0)) {
+      u.targetUnitId = undefined;
+      u.targetBuildingId = undefined;
+      u.isAttacking = false;
+      return;
+    }
     if (u.command === 'hold' && !u.targetUnitId && !u.targetBuildingId) {
       this.findTargetInRange(u);
     } else if (u.command === 'idle' || u.command === 'attack_move' || u.stance === 'aggressive') {
@@ -1016,24 +1028,43 @@ export class GameEngine {
   ) {
     const config = UNIT_CONFIGS[attacker.type];
     const isVehicle = config.category === 'vehicle';
-    let baseDamage = config.damage;
 
     // Recoil kickback and muzzle flash synchronization
     attacker.recoilOffset = isVehicle ? 6 : 2.5;
     attacker.muzzleFlash = 0.08;
     const aimAngle = attacker.turretRotation !== undefined ? attacker.turretRotation : attacker.rotation;
-    const barrelLen = isVehicle ? 18 : 8;
-    const tipX = attacker.x + Math.cos(aimAngle) * barrelLen;
-    const tipY = attacker.y + Math.sin(aimAngle) * barrelLen;
-    this.particles.push(...createMuzzleFlashParticles(tipX, tipY, aimAngle, isVehicle));
-
-    if (this.unlockedTechs.has('damage_boost') && attacker.faction === 'player') {
-      baseDamage *= 1.2;
+    // Visual only: the muzzle of the model the player sees (turret barrel, rifle, aircraft gun at altitude).
+    const [mox, moy] = muzzleOffset(attacker.type, attacker.rotation, aimAngle, config.isAir ? attacker.altitude || 55 : 0);
+    this.particles.push(...createMuzzleFlashParticles(attacker.x + mox, attacker.y + moy, aimAngle, isVehicle));
+    const shotsBefore = this.projectiles.length;
+    const targetZ = targetPos.category === 'aircraft' && targetObj && 'altitude' in targetObj ? (targetObj.altitude || 55) : targetPos.category === 'building' ? 0 : bodyHeight(targetObj && 'type' in targetObj ? targetObj.type : 'rifleman');
+    try {
+      this.fireProjectile(attacker, targetPos, this.shotDamage(attacker));
+    } finally {
+      for (let i = shotsBefore; i < this.projectiles.length; i++) {
+        const p = this.projectiles[i];
+        p.vox = attacker.x + mox - p.startX;   // drawn from the muzzle; the simulated track is unchanged
+        p.voy = attacker.y + moy - p.startY;
+        p.vez = targetZ;
+      }
     }
+  }
 
-    if (attacker.rank > 0) {
-      baseDamage *= 1 + attacker.rank * 0.15;
-    }
+  /** Damage of one shot: unit damage with the player's damage upgrade and veterancy (unchanged rules). */
+  private shotDamage(attacker: Unit): number {
+    let d = UNIT_CONFIGS[attacker.type].damage;
+    if (this.unlockedTechs.has('damage_boost') && attacker.faction === 'player') d *= 1.2;
+    if (attacker.rank > 0) d *= 1 + attacker.rank * 0.15;
+    return d;
+  }
+
+  private fireProjectile(
+    attacker: Unit,
+    targetPos: { x: number; y: number; hp: number; maxHp: number; armor: number; category: 'infantry' | 'vehicle' | 'aircraft' | 'building' },
+    baseDamage: number
+  ) {
+    const config = UNIT_CONFIGS[attacker.type];
+    const isVehicle = config.category === 'vehicle';
 
     if (attacker.type === 'artillery') {
       soundEngine.playCannonShot();
@@ -1405,6 +1436,11 @@ export class GameEngine {
             progress: 0,
           });
         }
+        // visual only: shots leave the weapon on top of the structure and meet aircraft at their altitude
+        const shot = this.projectiles[this.projectiles.length - 1];
+        shot.vox = 0;
+        shot.voy = b.type === 'heavy_turret' ? -16 : b.type === 'turret_missile' ? -18 : -14;
+        shot.vez = UNIT_CONFIGS[target.type].isAir ? target.altitude || 55 : bodyHeight(target.type);
       }
     } else {
       b.targetUnitId = undefined;
@@ -1523,8 +1559,8 @@ export class GameEngine {
         this.wreckages.splice(i, 1);
       }
     }
-    if (this.wreckages.length > 20) {
-      this.wreckages.splice(0, this.wreckages.length - 20);
+    if (this.wreckages.length > 36) {
+      this.wreckages.splice(0, this.wreckages.length - 36);
     }
 
     for (let i = this.treadMarks.length - 1; i >= 0; i--) {

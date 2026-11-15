@@ -150,5 +150,5 @@ describe('building art (V10)', () => {
     expect(constructionStage(NaN).stage).toBe('operational'); // bad data never leaves a building stuck half-built
   });
 
-  it('projection constant keeps the east wall visible but modest', () => { expect(K).toBeGreaterThan(0.25); expect(K).toBeLessThan(0.6); });
+  it('buildings share the unit projection: straight verticals, screen y = ground y - height (V11)', () => { expect(K).toBe(0); });
 });

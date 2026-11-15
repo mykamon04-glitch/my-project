@@ -114,7 +114,24 @@ export function createWreckage(unit: Unit): Wreckage {
     type: unit.type,
     life: 0,
     maxLife: 25,
+    faction: unit.faction,
+    altitude: unit.altitude || 0,
   };
+}
+
+/** A soldier falling: a small puff of dust and debris (no explosion, no shockwave). */
+export function createCasualtyParticles(x: number, y: number): Particle[] {
+  const particles: Particle[] = [];
+  for (let i = 0; i < 5; i++) {
+    const a = Math.random() * Math.PI * 2, sp = 6 + Math.random() * 14;
+    particles.push({
+      x: x + (Math.random() - 0.5) * 4, y: y + (Math.random() - 0.5) * 3,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp * 0.6 - 4,
+      life: 0, maxLife: 0.6 + Math.random() * 0.4,
+      color: i % 2 ? '#7a6f5c' : '#5f5848', size: 2 + Math.random() * 2.5, alpha: 0.5, type: 'dust',
+    });
+  }
+  return particles;
 }
 
 export function createExplosionParticles(x: number, y: number, isLarge: boolean = false): Particle[] {

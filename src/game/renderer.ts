@@ -26,6 +26,7 @@ import {
   Wreckage,
 } from '../types/game';
 import { GROUND_CHUNK_TILES, buildGroundChunk } from './groundTexture';
+import { UnitArtRenderer } from './units/unitRenderer';
 
 export interface Camera {
   x: number;
@@ -40,6 +41,7 @@ export class TacticalRenderer {
   private animFrameTime: number = 0;
   private shadowLvl: ShadowLevel = 'medium';
   private pStride = 1;
+  private art = new UnitArtRenderer();
   private viewMinX: number = -9999;
   private viewMaxX: number = 9999;
   private viewMinY: number = -9999;
@@ -127,21 +129,35 @@ export class TacticalRenderer {
     // 4. Render Resource Deposits (Titanium Crystals)
     this.renderResourceNodes(mapData);
 
-    // 5. Render Vehicle Wreckage
+    // 5. Casualties, burnt-out vehicles and crashed aircraft
+    this.art.beginFrame(currentTime, settings);
     this.renderWreckages(wreckages);
 
-    // 6. Render Buildings (Sorted by Y for isometric depth)
+    // 6-7. Buildings and ground units, painted back to front: a unit north of a building is hidden behind it.
     this.renderBaseRoads(buildings);
     this.renderRuins(buildings);
-    this.renderBuildings(buildings, units, settings);
+    const visible = units.filter(u => u.hp > 0 && this.inView(u, -60));
+    const groundUnits = visible.filter(u => !UNIT_CONFIGS[u.type].isAir).sort((a, b) => a.y - b.y);
+    const airUnits = visible.filter(u => UNIT_CONFIGS[u.type].isAir);
+    this.renderUnitMarkers(groundUnits, settings);
+    const tops = new Map<string, number>();
+    let gi = 0;
+    const drawUnitsUntil = (yLimit: number) => {
+      while (gi < groundUnits.length && groundUnits[gi].y < yLimit) {
+        const u = groundUnits[gi++];
+        tops.set(u.id, this.art.drawGround(ctx, u));
+      }
+    };
+    this.renderBuildings(buildings, units, settings, drawUnitsUntil);
+    drawUnitsUntil(Infinity);
 
-    // 7. Render Ground Units (Infantry & Vehicles)
-    const groundUnits = units.filter(u => !UNIT_CONFIGS[u.type].isAir);
-    this.renderUnits(groundUnits, settings?.unitVisibility, controlGroups, settings);
+    // 8. Flying aircraft (ground shadow, airframe at altitude, live rotors)
+    this.renderAircraft(airUnits, settings, tops);
 
-    // 8. Render Flying Aircraft (with ground shadow beneath them)
-    const airUnits = units.filter(u => UNIT_CONFIGS[u.type].isAir);
-    this.renderAircraft(airUnits, settings?.unitVisibility, controlGroups, settings);
+    // 8a. Unit overlays (health, veterancy, squad), always upright and above the art
+    for (const u of groundUnits) this.art.drawOverlay(ctx, u, tops.get(u.id) ?? u.y - 12, controlGroups);
+    for (const u of airUnits) this.art.drawOverlay(ctx, u, tops.get(u.id) ?? u.y - (u.altitude || 55) - 12, controlGroups);
+    this.art.endFrame();
 
     // 8b. Render Tactical Detected Threat Tracking Locks (OFF by default)
     if (tacticalIntelligence && (settings?.overlays?.enemyDetection ?? false)) {
@@ -988,28 +1004,10 @@ export class TacticalRenderer {
   }
 
   private renderWreckages(wreckages: Wreckage[]) {
-    const ctx = this.ctx;
-    wreckages.forEach(w => {
-      ctx.save();
-      ctx.translate(w.x, w.y);
-      ctx.rotate(w.rotation);
-
-      ctx.fillStyle = 'rgba(10, 10, 15, 0.6)';
-      ctx.beginPath();
-      ctx.ellipse(0, 0, 18, 14, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = '#1c1917';
-      ctx.fillRect(-12, -8, 24, 16);
-
-      const flicker = Math.sin(this.animFrameTime * 8 + w.x) * 2;
-      ctx.fillStyle = '#ea580c';
-      ctx.beginPath();
-      ctx.arc(flicker, -2, 4, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.restore();
-    });
+    for (const w of wreckages) {
+      if (!this.inView(w, -(w.altitude ?? 0))) continue;
+      this.art.drawWreck(this.ctx, w);
+    }
   }
 
   public getBuildingElevation(type: BuildingType): number {
@@ -1217,7 +1215,7 @@ export class TacticalRenderer {
     }
   }
 
-  private renderBuildings(buildings: Building[], units: Unit[], settings?: Partial<GameSettings>) {
+  private renderBuildings(buildings: Building[], units: Unit[], settings?: Partial<GameSettings>, drawUnitsUntil?: (y: number) => void) {
     const ctx = this.ctx;
     const sorted = [...buildings].sort((a, b) => a.pixelY - b.pixelY);
     this.aimIndex = null;
@@ -1251,6 +1249,7 @@ export class TacticalRenderer {
       const x = b.pixelX - w / 2;
       const y = b.pixelY - h / 2;
       const roofY = y - elev;
+      drawUnitsUntil?.(y + h);
       this.seenBuildings.set(b.id, { x, y, w, h, gx: b.x, gy: b.y, ratio: b.constructionProgress >= 1 ? 1 : -1, seed: Math.abs(Math.sin(b.x * 12.9898 + b.y * 78.233) * 43758.5453) % 1 });
 
       ctx.save();
@@ -2309,778 +2308,145 @@ export class TacticalRenderer {
     }
   }
 
-  private renderUnits(
-    units: Unit[],
-    visibilityMode: 'standard' | 'enhanced' = 'standard',
-    controlGroups?: Record<number, string[]>,
-    settings?: Partial<GameSettings>
-  ) {
-    const ctx = this.ctx;
-    // Temporary clean waypoint paths for selected player units (No permanent dark lines)
-    ctx.save();
-    units.forEach(u => {
-      if (!u.selected || u.faction !== 'player' || u.hp <= 0) return;
-      if (u.path && u.path.length > 0 && u.isMoving) {
-        ctx.strokeStyle = 'rgba(56, 185, 138, 0.65)';
-        ctx.lineWidth = 1.4;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.moveTo(u.x, u.y);
-        for (let i = 0; i < u.path.length; i++) {
-          ctx.lineTo(u.path[i].x, u.path[i].y);
-        }
-        ctx.stroke();
-
-        const end = u.path[u.path.length - 1];
-        ctx.setLineDash([]);
-        ctx.fillStyle = '#38B98A';
-        ctx.beginPath();
-        ctx.arc(end.x, end.y, 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    });
-    ctx.restore();
-
-    units.forEach(u => {
-      if (u.hp <= 0) return;
-      if (u.x < this.viewMinX || u.x > this.viewMaxX || u.y < this.viewMinY || u.y > this.viewMaxY) return;
-      const isPlayer = u.faction === 'player';
-      const isVehicle = UNIT_CONFIGS[u.type].category === 'vehicle';
-      const factionColor = isPlayer ? '#22c55e' : '#ef4444';
-
-      ctx.save();
-      ctx.translate(u.x, u.y);
-
-      // 1. Single Clean Selection Indicator (No rotating pips, clean ground bracket/ellipse)
-      if (u.selected && settings?.overlays?.unitSelection !== false) {
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 1.5;
-        const selR = isVehicle ? 18 : 10;
-        ctx.beginPath();
-        ctx.ellipse(0, isVehicle ? 2 : 1, selR, selR * 0.65, 0, 0, Math.PI * 2);
-        ctx.stroke();
-
-        // Optional attack range preview when attackRange overlay is enabled
-        if (settings?.overlays?.attackRange) {
-          const cfg = UNIT_CONFIGS[u.type];
-          if (cfg.range > 0) {
-            ctx.save();
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.28)';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 4]);
-            ctx.beginPath();
-            ctx.arc(0, 0, cfg.range, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.restore();
-          }
-        }
-      }
-
-      // 2. Unit Shadow
-      if (this.shadowLvl !== 'off') {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-        ctx.beginPath();
-        if (isVehicle) {
-          ctx.ellipse(0, 3, 16, 11, 0, 0, Math.PI * 2);
-        } else {
-          ctx.ellipse(0, 2, 7, 4, 0, 0, Math.PI * 2);
-        }
-        ctx.fill();
-      }
-
-      // 3. Render Body
-      if (isVehicle) {
-        this.renderVehicle(u, factionColor);
-      } else {
-        this.renderInfantry(u, factionColor);
-      }
-
-      // 4. Health Bar & Rank (Safe Whole Integers)
-      if (u.selected || u.hp < u.maxHp) {
-        const safeMax = Math.max(1, Math.round(Number.isFinite(u.maxHp) ? u.maxHp : 100));
-        const safeHp = Math.max(0, Math.min(safeMax, Math.round(Number.isFinite(u.hp) ? u.hp : 0)));
-        const hpRatio = safeHp / safeMax;
-        const barW = isVehicle ? 28 : 18;
-        const barY = isVehicle ? -22 : -17;
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-        ctx.fillRect(-barW / 2 - 1, barY - 1, barW + 2, 5);
-
-        ctx.fillStyle = hpRatio > 0.5 ? '#38B98A' : hpRatio > 0.25 ? '#F2B84B' : '#E45B63';
-        ctx.fillRect(-barW / 2, barY, barW * hpRatio, 3);
-
-        if (u.selected) {
-          ctx.font = 'bold 7px monospace';
-          ctx.fillStyle = '#FFFFFF';
-          ctx.textAlign = 'center';
-          ctx.fillText(`${safeHp}/${safeMax}`, 0, barY - 3);
-        }
-      }
-
-      // Veterancy Stars
-      if (u.rank > 0) {
-        ctx.fillStyle = '#f59e0b';
-        ctx.font = '8px sans-serif';
-        ctx.textAlign = 'center';
-        const stars = u.rank === 3 ? '⭐⭐⭐' : u.rank === 2 ? '⭐⭐' : '⭐';
-        ctx.fillText(stars, 0, isVehicle ? -25 : -20);
-      }
-
-      // 5. Squad Control Group Badge (Squad 1-4)
-      if (controlGroups && isPlayer) {
-        for (let g = 1; g <= 4; g++) {
-          if (controlGroups[g]?.includes(u.id)) {
-            const badgeY = isVehicle ? -29 : -23;
-            ctx.fillStyle = g === 1 ? '#38bdf8' : g === 2 ? '#f59e0b' : g === 3 ? '#a855f7' : '#34d399';
-            ctx.beginPath();
-            ctx.roundRect(-8, badgeY - 7, 16, 9, 2);
-            ctx.fill();
-            ctx.fillStyle = '#0f172a';
-            ctx.font = 'bold 7px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText(`S${g}`, 0, badgeY);
-            break;
-          }
-        }
-      }
-
-      ctx.restore();
-    });
-  }
-
-  private renderAircraft(
-    airUnits: Unit[],
-    visibilityMode: 'standard' | 'enhanced' = 'standard',
-    controlGroups?: Record<number, string[]>,
-    settings?: Partial<GameSettings>
-  ) {
-    const ctx = this.ctx;
-
-    airUnits.forEach(u => {
-      if (u.hp <= 0) return;
-      if (u.x < this.viewMinX || u.x > this.viewMaxX || u.y < this.viewMinY || u.y > this.viewMaxY) return;
-      const isPlayer = u.faction === 'player';
-      const factionColor = isPlayer ? '#22c55e' : '#ef4444';
-      const altitude = u.altitude || 55;
-
-      ctx.save();
-
-      // 1. Ground Drop Shadow (placed on ground directly beneath aircraft)
-      if (this.shadowLvl !== 'off') {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
-        ctx.beginPath();
-        ctx.ellipse(u.x, u.y, 14, 9, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // 2. High Flight Layer Position
-      ctx.translate(u.x, u.y - altitude);
-
-      // Clean single selection ring (NO unselected rim circle)
-      if (u.selected && settings?.overlays?.unitSelection !== false) {
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 18, 12, 0, 0, Math.PI * 2);
-        ctx.stroke();
-
-        if (settings?.overlays?.attackRange) {
-          const cfg = UNIT_CONFIGS[u.type];
-          if (cfg.range > 0) {
-            ctx.save();
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.28)';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 4]);
-            ctx.beginPath();
-            ctx.arc(0, 0, cfg.range, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.restore();
-          }
-        }
-      }
-
-      ctx.rotate(u.rotation);
-
-      // Aerodynamic Banking Roll on high-speed turns
-      if (u.bankAngle && Math.abs(u.bankAngle) > 0.01) {
-        ctx.scale(1, Math.cos(u.bankAngle));
-      }
-
-      if (u.type === 'stealth_fighter') {
-        // Delta wing supersonic jet
-        ctx.fillStyle = u.faction === 'player' ? '#334155' : '#451a1a';
-        ctx.beginPath();
-        ctx.moveTo(16, 0); // Nose
-        ctx.lineTo(-14, -14); // Left wing
-        ctx.lineTo(-8, 0);
-        ctx.lineTo(-14, 14); // Right wing
-        ctx.closePath();
-        ctx.fill();
-
-        // Cockpit canopy
-        ctx.fillStyle = '#38bdf8';
-        ctx.beginPath();
-        ctx.ellipse(2, 0, 6, 2.5, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Afterburner exhaust glow
-        ctx.fillStyle = '#f97316';
-        ctx.beginPath();
-        ctx.arc(-11, 0, 3, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (u.type === 'attack_helicopter') {
-        // Helicopter Fuselage
-        ctx.fillStyle = u.faction === 'player' ? '#334155' : '#451a1a';
-        ctx.beginPath();
-        ctx.roundRect(-10, -5, 20, 10, 3);
-        ctx.fill();
-
-        // Tail boom
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(-18, -1.5, 9, 3);
-
-        // Faction color
-        ctx.fillStyle = factionColor;
-        ctx.fillRect(-6, -4, 4, 8);
-
-        // Cockpit
-        ctx.fillStyle = '#38bdf8';
-        ctx.beginPath();
-        ctx.arc(6, 0, 4, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Spinning Main Rotor Blades
-        const rotorAngle = u.rotorAngle !== undefined ? u.rotorAngle : this.animFrameTime * 25;
-        ctx.save();
-        ctx.rotate(rotorAngle);
-        ctx.strokeStyle = 'rgba(226, 232, 240, 0.7)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(-22, 0);
-        ctx.lineTo(22, 0);
-        ctx.moveTo(0, -22);
-        ctx.lineTo(0, 22);
-        ctx.stroke();
-        ctx.restore();
-      } else {
-        // Recon Drone (quadcopter UAV)
-        ctx.fillStyle = '#475569';
-        ctx.beginPath();
-        ctx.arc(0, 0, 6, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#64748b';
-        ctx.lineWidth = 1.5;
-        // 4 motor arms
-        ctx.beginPath();
-        ctx.moveTo(-10, -10);
-        ctx.lineTo(10, 10);
-        ctx.moveTo(-10, 10);
-        ctx.lineTo(10, -10);
-        ctx.stroke();
-
-        // Rotor discs
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.4)';
-        ctx.beginPath();
-        ctx.arc(-10, -10, 4, 0, Math.PI * 2);
-        ctx.arc(10, 10, 4, 0, Math.PI * 2);
-        ctx.arc(-10, 10, 4, 0, Math.PI * 2);
-        ctx.arc(10, -10, 4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // Health bar (Safe Whole Integers)
-      if (u.selected || u.hp < u.maxHp) {
-        const safeMax = Math.max(1, Math.round(Number.isFinite(u.maxHp) ? u.maxHp : 100));
-        const safeHp = Math.max(0, Math.min(safeMax, Math.round(Number.isFinite(u.hp) ? u.hp : 0)));
-        const hpRatio = safeHp / safeMax;
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-        ctx.fillRect(-15, -22, 30, 5);
-        ctx.fillStyle = hpRatio > 0.5 ? '#38B98A' : hpRatio > 0.25 ? '#F2B84B' : '#E45B63';
-        ctx.fillRect(-14, -21, 28 * hpRatio, 3);
-
-        if (u.selected) {
-          ctx.font = 'bold 7px monospace';
-          ctx.fillStyle = '#FFFFFF';
-          ctx.textAlign = 'center';
-          ctx.fillText(`${safeHp}/${safeMax}`, 0, -25);
-        }
-      }
-
-      // Squad Control Group Badge
-      if (controlGroups && isPlayer) {
-        for (let g = 1; g <= 4; g++) {
-          if (controlGroups[g]?.includes(u.id)) {
-            const badgeY = -27;
-            ctx.fillStyle = g === 1 ? '#38bdf8' : g === 2 ? '#f59e0b' : g === 3 ? '#a855f7' : '#34d399';
-            ctx.beginPath();
-            ctx.roundRect(-8, badgeY - 7, 16, 9, 2);
-            ctx.fill();
-            ctx.fillStyle = '#0f172a';
-            ctx.font = 'bold 7px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText(`S${g}`, 0, badgeY);
-            break;
-          }
-        }
-      }
-
-      ctx.restore();
-    });
-  }
-
-  private renderInfantry(u: Unit, factionColor: string) {
-    const ctx = this.ctx;
-    ctx.rotate(u.rotation);
-
-    const legOffset = u.isMoving ? Math.sin(this.animFrameTime * 14) * 3 : 0;
-
-    // Tactical boots & legs
-    ctx.fillStyle = '#111827';
-    ctx.fillRect(-3, -3 + legOffset, 2.5, 6);
-    ctx.fillRect(1, -3 - legOffset, 2.5, 6);
-
-    // Torso / Body armor vest
-    ctx.fillStyle = u.faction === 'player' ? '#173A32' : '#3B1D1D';
-    ctx.beginPath();
-    ctx.arc(0, 0, 5.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Faction identifier shoulder flash
-    ctx.fillStyle = factionColor;
-    ctx.fillRect(-4, -5, 8, 2);
-
-    // Unit-specific gear and silhouettes
-    switch (u.type) {
-      case 'heavy_gunner': {
-        // Heavy Powered Exoskeleton Shoulder Guards
-        ctx.fillStyle = '#475569';
-        ctx.fillRect(-6, -4, 3, 8);
-        ctx.fillRect(3, -4, 3, 8);
-        // Heavy Ammo Drum Backpack
-        ctx.fillStyle = '#1e293b';
-        ctx.beginPath();
-        ctx.arc(-4, 0, 4, 0, Math.PI * 2);
-        ctx.fill();
-        // Heavy Rotary Machine Gun
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(2, -2.5, 12, 5);
-        ctx.fillStyle = '#eab308';
-        ctx.fillRect(3, 1, 6, 2); // Ammo belt
-        break;
-      }
-
-      case 'sniper': {
-        // Camo Ghillie Cape draped over shoulders
-        ctx.fillStyle = u.faction === 'player' ? '#2d4a3e' : '#4a2d2d';
-        ctx.beginPath();
-        ctx.ellipse(-3, 0, 5, 6, 0, 0, Math.PI * 2);
-        ctx.fill();
-        // Precision Long Rifle with Scope
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(2, -1.5, 14, 2.5);
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(5, -3, 4, 2); // Optic scope glint
-        break;
-      }
-
-      case 'medic': {
-        // White Field Medical Satchel with Red Cross
-        ctx.fillStyle = '#f8fafc';
-        ctx.fillRect(-3, -6, 6, 4);
-        ctx.fillStyle = '#ef4444';
-        ctx.fillRect(-1.5, -5.5, 3, 1);
-        ctx.fillRect(-0.5, -6.5, 1, 3);
-        // Biotic Nanite Injector with Soft Green Pulse
-        ctx.fillStyle = '#10b981';
-        ctx.fillRect(2, -1.5, 7, 2.5);
-        ctx.fillStyle = '#34d399';
-        ctx.beginPath();
-        ctx.arc(9, -0.25, 2, 0, Math.PI * 2);
-        ctx.fill();
-        // White Medical Helmet with Red Cross
-        ctx.fillStyle = '#f8fafc';
-        ctx.beginPath();
-        ctx.arc(0, 0, 3.8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#ef4444';
-        ctx.fillRect(-1.2, -0.4, 2.4, 0.8);
-        ctx.fillRect(-0.4, -1.2, 0.8, 2.4);
-        return;
-      }
-
-      case 'engineer': {
-        // High-Visibility Safety Vest & Tool Belt
-        ctx.fillStyle = '#f59e0b';
-        ctx.fillRect(-4, -5, 8, 3);
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(-5, -3, 3, 6);
-        // Arc Welding Torch with Blue Tip
-        ctx.fillStyle = '#475569';
-        ctx.fillRect(2, -1.5, 8, 2);
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(9, -2, 2.5, 3);
-        // Yellow Hardhat with Protective Visor
-        ctx.fillStyle = '#eab308';
-        ctx.beginPath();
-        ctx.arc(0, 0, 3.8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(1, -2, 2, 4); // Visor
-        return;
-      }
-
-      case 'rocket_soldier': {
-        // Heavy Shoulder-Mounted RPG Launcher
-        ctx.fillStyle = '#475569';
-        ctx.fillRect(-2, -5, 16, 4.5);
-        // Visible Conical Rocket Warhead
-        ctx.fillStyle = '#16a34a';
-        ctx.beginPath();
-        ctx.moveTo(14, -5);
-        ctx.lineTo(18, -2.75);
-        ctx.lineTo(14, -0.5);
-        ctx.closePath();
-        ctx.fill();
-        break;
-      }
-
-      case 'flamethrower': {
-        // Dual Fuel Propellant Tanks Backpack
-        ctx.fillStyle = '#ea580c';
-        ctx.fillRect(-5, -6, 4, 12);
-        ctx.fillStyle = '#c2410c';
-        ctx.fillRect(-4, -5, 2, 10);
-        // Flame Projector Lance
-        ctx.fillStyle = '#334155';
-        ctx.fillRect(2, -1.5, 10, 3);
-        // Pilot Flame
-        ctx.fillStyle = '#f59e0b';
-        ctx.beginPath();
-        ctx.arc(12, 0, 2, 0, Math.PI * 2);
-        ctx.fill();
-        break;
-      }
-
-      case 'commando': {
-        // Red Beret
-        ctx.fillStyle = '#dc2626';
-        ctx.beginPath();
-        ctx.arc(0, 0, 4, 0, Math.PI * 2);
-        ctx.fill();
-        // Dual-Wield Carbines
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(2, -3.5, 8, 2);
-        ctx.fillRect(2, 1.5, 8, 2);
-        return; // Already rendered head
-      }
-
-      case 'scout': {
-        // Radio Communication Antenna
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(-3, 0);
-        ctx.lineTo(-8, -4);
-        ctx.stroke();
-        // Binocular & Light SMG
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(2, -1, 7, 2);
-        break;
-      }
-
-      default: {
-        // Standard Infantry Combat Rifle
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(2, -1.5, 9, 2.5);
-        break;
-      }
-    }
-
-    // Tactical Helmet
-    ctx.fillStyle = '#334155';
-    ctx.beginPath();
-    ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  private renderVehicle(u: Unit, factionColor: string) {
+  /** Ground paths of selected units and the selection / faction rings under every unit (drawn on the ground layer). */
+  private renderUnitMarkers(units: Unit[], settings?: Partial<GameSettings>) {
     const ctx = this.ctx;
     ctx.save();
-    ctx.rotate(u.rotation);
-
-    if (u.type === 'medical_apc') {
-      // 6-wheel Armored Medical Evacuation APC
-      ctx.fillStyle = '#1c1917';
-      const wheelPositions = [-10, 0, 10];
-      wheelPositions.forEach(wx => {
-        ctx.fillRect(wx - 4, -13, 8, 4.5); // Top wheels
-        ctx.fillRect(wx - 4, 8.5, 8, 4.5); // Bottom wheels
-        // Hubcap rim
-        ctx.fillStyle = '#64748b';
-        ctx.fillRect(wx - 1, -12, 2, 2.5);
-        ctx.fillRect(wx - 1, 9.5, 2, 2.5);
-        ctx.fillStyle = '#1c1917';
-      });
-
-      // Armored APC Body (clean medical slate-cream/olive)
-      ctx.fillStyle = u.faction === 'player' ? '#2e3d36' : '#3d2525';
-      ctx.beginPath();
-      ctx.roundRect(-14, -9, 28, 18, 4);
-      ctx.fill();
-      ctx.strokeStyle = '#475569';
+    for (const u of units) {
+      if (!u.selected || u.faction !== 'player' || !u.isMoving || !u.path?.length) continue;
+      ctx.strokeStyle = 'rgba(56, 185, 138, 0.65)';
       ctx.lineWidth = 1.4;
-      ctx.stroke();
-
-      // Rear medical clamshell access doors
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(-14, -6, 3, 12);
-      ctx.strokeStyle = '#0f172a';
-      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.moveTo(-14, 0);
-      ctx.lineTo(-11, 0);
+      ctx.moveTo(u.x, u.y);
+      for (const p of u.path) ctx.lineTo(p.x, p.y);
       ctx.stroke();
-
-      // Faction marker
-      ctx.fillStyle = factionColor;
-      ctx.fillRect(-8, -8, 3, 16);
-
-      // White cross square on roof
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(-2, -5, 10, 10);
-      // Bright red cross
-      ctx.fillStyle = '#ef4444';
-      ctx.fillRect(1.5, -4, 3, 8);
-      ctx.fillRect(-1, -1.5, 8, 3);
-    } else if (u.type === 'recon_buggy') {
-      // Off-road Dune Buggy with 4 Big Wheels
-      ctx.fillStyle = '#1c1917';
-      ctx.fillRect(-12, -12, 7, 5); // Front left
-      ctx.fillRect(5, -12, 7, 5); // Front right
-      ctx.fillRect(-12, 7, 7, 5); // Rear left
-      ctx.fillRect(5, 7, 7, 5); // Rear right
-
-      // Tubular Roll-Cage Chassis
-      ctx.fillStyle = u.faction === 'player' ? '#173A32' : '#3B1D1D';
+      const end = u.path[u.path.length - 1];
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#38B98A';
       ctx.beginPath();
-      ctx.roundRect(-10, -7, 20, 14, 3);
+      ctx.arc(end.x, end.y, 3, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = '#64748b';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // Faction Stripe
-      ctx.fillStyle = factionColor;
-      ctx.fillRect(-6, -4, 4, 8);
-    } else {
-      // Heavy Caterpillar Tank Treads
-      const treadLength = u.type === 'heavy_tank' || u.type === 'siege_tank' ? 32 : 26;
-      const treadWidth = u.type === 'heavy_tank' ? 6 : 5;
-      const trackOffset = u.type === 'heavy_tank' ? 12 : 10;
-
-      ctx.fillStyle = '#111827';
-      ctx.fillRect(-treadLength / 2, -trackOffset - treadWidth / 2, treadLength, treadWidth);
-      ctx.fillRect(-treadLength / 2, trackOffset - treadWidth / 2, treadLength, treadWidth);
-
-      // Sprocket wheel link details
-      ctx.fillStyle = '#475569';
-      for (let i = -treadLength / 2 + 3; i <= treadLength / 2 - 3; i += 4) {
-        ctx.fillRect(i, -trackOffset - treadWidth / 2, 2, treadWidth);
-        ctx.fillRect(i, trackOffset - treadWidth / 2, 2, treadWidth);
-      }
-
-      // Sloped Glacis Armored Chassis
-      ctx.fillStyle = u.faction === 'player' ? '#1e293b' : '#3b1d1d';
-      const bodyW = treadLength - 4;
-      const bodyH = trackOffset * 2 - 2;
-      ctx.beginPath();
-      ctx.roundRect(-bodyW / 2, -bodyH / 2, bodyW, bodyH, 3);
-      ctx.fill();
-
-      // Armored side skirt plates
-      ctx.fillStyle = u.faction === 'player' ? '#334155' : '#572727';
-      ctx.fillRect(-bodyW / 2 + 2, -bodyH / 2 + 1, bodyW - 4, 3);
-      ctx.fillRect(-bodyW / 2 + 2, bodyH / 2 - 4, bodyW - 4, 3);
-
-      // Faction identification panel
-      ctx.fillStyle = factionColor;
-      ctx.fillRect(-bodyW / 2 + 3, -4, 4, 8);
     }
-
-    ctx.restore();
-
-    // Independent Turret / Roof Equipment Traverse
-    const turretAngle = u.turretRotation !== undefined ? u.turretRotation : u.rotation;
-    const recoil = u.recoilOffset || 0;
-    ctx.save();
-    ctx.rotate(turretAngle);
-
-    if (u.type === 'medical_apc') {
-      // Medical Triage Sensor Mast & Searchlight (No weapons)
-      ctx.fillStyle = '#334155';
-      ctx.beginPath();
-      ctx.arc(0, 0, 5.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#0f172a';
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
-
-      // Forward steerable triage searchlight
-      ctx.fillStyle = '#e2e8f0';
-      ctx.fillRect(3, -2, 4, 4);
-
-      // Flashing Medical Emergency Beacon
-      const beaconOn = Math.sin(this.animFrameTime * 9) > 0;
-      ctx.fillStyle = beaconOn ? '#10b981' : '#047857';
-      ctx.beginPath();
-      ctx.arc(-2, 0, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-      return;
+    ctx.setLineDash([]);
+    const showSel = settings?.overlays?.unitSelection !== false;
+    const enhanced = settings?.unitVisibility === 'enhanced';
+    for (const u of units) {
+      const air = !!UNIT_CONFIGS[u.type].isAir;
+      if (air) continue;
+      this.art.drawGroundMarker(ctx, u, u.selected && showSel, enhanced);
+      if (u.selected && showSel && settings?.overlays?.attackRange) this.rangeRing(u.x, u.y, UNIT_CONFIGS[u.type].range);
     }
-
-    ctx.fillStyle = '#475569';
-    if (u.type === 'heavy_tank') {
-      // Twin Heavy Cannons with Recoil
-      ctx.fillRect(6 - recoil, -5, 20, 3.5);
-      ctx.fillRect(6 - recoil, 1.5, 20, 3.5);
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(25 - recoil, -6, 3, 5); // Muzzle brake
-      ctx.fillRect(25 - recoil, 0.5, 3, 5);
-    } else if (u.type === 'artillery') {
-      // Long-Range Self-Propelled Howitzer Barrel
-      ctx.fillRect(4 - recoil, -3, 26, 6);
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(28 - recoil, -4, 4, 8); // Heavy muzzle brake
-    } else if (u.type === 'siege_tank') {
-      // Heavy Siege Cannon
-      ctx.fillRect(5 - recoil, -4, 22, 8);
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(25 - recoil, -5, 4, 10);
-    } else if (u.type === 'mobile_sam') {
-      // SAM Launcher Box with 4 Missile Pods
-      ctx.fillStyle = '#334155';
-      ctx.fillRect(-6, -7, 18, 14);
-      ctx.fillStyle = '#f87171';
-      ctx.fillRect(11, -5, 3, 3);
-      ctx.fillRect(11, 2, 3, 3);
-      ctx.fillRect(6, -5, 3, 3);
-      ctx.fillRect(6, 2, 3, 3);
-    } else if (u.type === 'recon_buggy') {
-      // Pintle-mounted 50 cal MG
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(3, -1.5, 12, 3);
-    } else if (u.type === 'light_tank') {
-      ctx.fillRect(5 - recoil, -2, 14, 3.5);
-    } else {
-      // Main Battle Tank 120mm Smoothbore with Bore Evacuator
-      ctx.fillRect(6 - recoil, -2.5, 18, 5);
-      ctx.fillStyle = '#334155';
-      ctx.fillRect(13 - recoil, -3.5, 5, 7); // Bore evacuator
-    }
-
-    // Cast Steel Armored Turret Dome
-    ctx.fillStyle = u.faction === 'player' ? '#334155' : '#451a1a';
-    ctx.beginPath();
-    ctx.arc(0, 0, u.type === 'heavy_tank' ? 9 : 7.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // Commander's Cupola Hatch
-    ctx.fillStyle = '#1e293b';
-    ctx.beginPath();
-    ctx.arc(-2, -2, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Synchronized Gun Muzzle Flash Burst
-    if (u.muzzleFlash && u.muzzleFlash > 0) {
-      const flashAlpha = Math.min(1, u.muzzleFlash * 7);
-      const barrelLen =
-        u.type === 'artillery' ? 32 : u.type === 'heavy_tank' ? 28 : u.type === 'siege_tank' ? 29 : 24;
-      ctx.save();
-      ctx.fillStyle = `rgba(254, 240, 138, ${flashAlpha})`;
-      ctx.shadowColor = '#f59e0b';
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.arc(barrelLen, 0, 4 + u.muzzleFlash * 14, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Sharp spark rays
-      ctx.strokeStyle = `rgba(255, 255, 255, ${flashAlpha * 0.9})`;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(barrelLen - 2, 0);
-      ctx.lineTo(barrelLen + 10, 0);
-      ctx.moveTo(barrelLen, -6);
-      ctx.lineTo(barrelLen, 6);
-      ctx.stroke();
-      ctx.restore();
-    }
-
     ctx.restore();
   }
+
+  private rangeRing(x: number, y: number, range: number) {
+    if (!(range > 0)) return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.28)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(x, y, range, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** Aircraft: ground shadows, airframes at altitude and their selection rings. Returns sprite tops for the overlay pass. */
+  private renderAircraft(airUnits: Unit[], settings: Partial<GameSettings> | undefined, tops: Map<string, number>) {
+    const ctx = this.ctx;
+    const showSel = settings?.overlays?.unitSelection !== false;
+    const enhanced = settings?.unitVisibility === 'enhanced';
+    const sorted = [...airUnits].sort((a, b) => a.y - b.y);
+    for (const u of sorted) {
+      this.art.drawGroundMarker(ctx, u, u.selected && showSel, enhanced);
+      if (u.selected && showSel && settings?.overlays?.attackRange) this.rangeRing(u.x, u.y, UNIT_CONFIGS[u.type].range);
+      tops.set(u.id, this.art.drawAir(ctx, u));
+    }
+  }
+
+  private inView(u: { x: number; y: number }, up = 0) {
+    return !(u.x < this.viewMinX || u.x > this.viewMaxX || u.y < this.viewMinY || u.y - up > this.viewMaxY);
+  }
+
 
   private renderProjectiles(projectiles: Projectile[]) {
     const ctx = this.ctx;
-    projectiles.forEach(p => {
+    // Visual offsets (V11): a shot is drawn from the muzzle the player sees and lands at the height of what it hits.
+    const at = (p: Projectile, t: number): [number, number] => {
+      const k = Math.max(0, Math.min(1, t));
+      return [
+        p.startX + (p.targetX - p.startX) * k + (p.vox ?? 0) * (1 - k),
+        p.startY + (p.targetY - p.startY) * k + (p.voy ?? 0) * (1 - k) - (p.vez ?? 0) * k,
+      ];
+    };
+    for (const p of projectiles) {
+      const t = Math.min(1, p.progress);
       ctx.save();
-
       if (p.type === 'artillery' || p.type === 'grenade' || p.type === 'bomb') {
-        const currentX = p.startX + (p.targetX - p.startX) * p.progress;
-        const currentY = p.startY + (p.targetY - p.startY) * p.progress;
-        const arcY = -Math.sin(p.progress * Math.PI) * (p.arcHeight || 90);
-
+        const [gx, gy] = [p.startX + (p.targetX - p.startX) * t, p.startY + (p.targetY - p.startY) * t];
+        const [cx, cy] = at(p, t);
+        const arcY = -Math.sin(t * Math.PI) * (p.arcHeight || 90);
         ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
         ctx.beginPath();
-        ctx.arc(currentX, currentY, 3, 0, Math.PI * 2);
+        ctx.arc(gx, gy, p.type === 'bomb' ? 3.5 : 2.5, 0, Math.PI * 2);
         ctx.fill();
-
-        ctx.fillStyle = p.type === 'bomb' ? '#ef4444' : '#f59e0b';
+        // shell body, oriented along its flight
+        const [nx, ny] = at(p, t + 0.02);
+        const ny2 = ny - Math.sin(Math.min(1, t + 0.02) * Math.PI) * (p.arcHeight || 90);
+        const ang = Math.atan2(ny2 - (cy + arcY), nx - cx);
+        ctx.translate(cx, cy + arcY);
+        ctx.rotate(ang);
+        ctx.fillStyle = p.type === 'bomb' ? '#3a3d38' : p.type === 'grenade' ? '#4a4f3c' : '#5b5a50';
+        const L = p.type === 'bomb' ? 5 : p.type === 'grenade' ? 2.2 : 3.5;
         ctx.beginPath();
-        ctx.arc(currentX, currentY + arcY, p.type === 'bomb' ? 5 : 4, 0, Math.PI * 2);
+        ctx.ellipse(0, 0, L, L * 0.42, 0, 0, Math.PI * 2);
         ctx.fill();
+        ctx.fillStyle = 'rgba(255, 200, 120, 0.85)';
+        ctx.beginPath(); ctx.arc(-L, 0, 1, 0, Math.PI * 2); ctx.fill();
       } else if (p.type === 'missile') {
-        const angle = Math.atan2(p.targetY - p.y, p.targetX - p.x);
-        ctx.translate(p.x, p.y);
+        const [cx, cy] = at(p, t);
+        const [nx, ny] = at(p, t + 0.02);
+        const angle = Math.atan2(ny - cy, nx - cx);
+        // smoke trail
+        const [tx, ty] = at(p, Math.max(0, t - 0.15));
+        ctx.strokeStyle = 'rgba(200, 200, 196, 0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(cx, cy); ctx.stroke();
+        ctx.translate(cx, cy);
         ctx.rotate(angle);
-
-        ctx.fillStyle = '#e2e8f0';
-        ctx.fillRect(-6, -1.5, 12, 3);
-
-        ctx.fillStyle = '#f97316';
+        ctx.fillStyle = '#d6d8d2';
+        ctx.fillRect(-5, -1, 10, 2);
+        ctx.fillStyle = '#ffb347';
         ctx.beginPath();
-        ctx.arc(-7, 0, 3, 0, Math.PI * 2);
+        ctx.arc(-6, 0, 2.2, 0, Math.PI * 2);
         ctx.fill();
       } else if (p.type === 'flame') {
-        ctx.fillStyle = '#ea580c';
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
-        ctx.fill();
+        const [cx, cy] = at(p, t);
+        const r = 3 + t * 5;
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+        g.addColorStop(0, 'rgba(255, 220, 140, 0.95)');
+        g.addColorStop(0.5, 'rgba(240, 110, 30, 0.75)');
+        g.addColorStop(1, 'rgba(120, 50, 20, 0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
       } else {
-        const tailProgress = Math.max(0, p.progress - 0.12);
-        let tailX = p.startX + (p.targetX - p.startX) * tailProgress;
-        let tailY = p.startY + (p.targetY - p.startY) * tailProgress;
-        const dx = p.x - tailX;
-        const dy = p.y - tailY;
-        const dist = Math.hypot(dx, dy);
+        const [hx, hy] = at(p, t);
+        let [tx, ty] = at(p, Math.max(0, t - 0.12));
+        const dx = hx - tx, dy = hy - ty, dist = Math.hypot(dx, dy);
         const maxLen = p.type === 'cannon' ? 26 : 18;
-        if (dist > maxLen && dist > 0.001) {
-          tailX = p.x - (dx / dist) * maxLen;
-          tailY = p.y - (dy / dist) * maxLen;
-        }
-
-        ctx.strokeStyle = p.faction === 'player' ? '#fde047' : '#f87171';
-        ctx.lineWidth = p.type === 'cannon' ? 2.5 : 1.5;
+        if (dist > maxLen && dist > 0.001) { tx = hx - (dx / dist) * maxLen; ty = hy - (dy / dist) * maxLen; }
+        ctx.strokeStyle = p.faction === 'player' ? 'rgba(255, 228, 140, 0.95)' : 'rgba(255, 168, 128, 0.95)';
+        ctx.lineWidth = p.type === 'cannon' ? 2.2 : 1.2;
+        ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.moveTo(tailX, tailY);
-        ctx.lineTo(p.x, p.y);
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(hx, hy);
         ctx.stroke();
       }
-
       ctx.restore();
-    });
+    }
   }
 
   private renderParticles(particles: Particle[], smokeDensity: 'off' | 'low' | 'normal' = 'normal') {

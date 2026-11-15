@@ -208,6 +208,7 @@ export interface Unit {
   homePosition?: Vector2; // return post after defending
   isDefendingZone?: boolean; // active defensive response
   manualOrderTime?: number; // timestamp when player gave explicit order
+  workAngle?: number; // visual only: direction of the patient / repair job of the last heal or repair pulse
 }
 
 export interface Building {
@@ -252,6 +253,10 @@ export interface Projectile {
   type: 'bullet' | 'cannon' | 'missile' | 'laser' | 'artillery' | 'nuke' | 'flame' | 'grenade' | 'bomb';
   progress: number; // 0 to 1
   arcHeight?: number; // for artillery/grenade
+  // Visual only (never read by the simulation): where the shot is drawn relative to its simulated ground track.
+  vox?: number; // screen offset of the muzzle from (startX, startY); fades out along the flight
+  voy?: number;
+  vez?: number; // height above the ground of the point that is hit (aircraft, turret tops); fades in along the flight
 }
 
 export interface Particle {
@@ -275,6 +280,9 @@ export interface Wreckage {
   type: UnitType;
   life: number; // duration before despawning
   maxLife: number;
+  // Visual record of the unit that was lost (casualties, burnt-out vehicles, crashed aircraft)
+  faction?: Faction;
+  altitude?: number;
 }
 
 export interface FloatingText {

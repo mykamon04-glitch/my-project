@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { pickUnit, unitAimPoint } from './game/unitPicking';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Eye, EyeOff, Crosshair, Layers, RotateCcw, Navigation, CheckSquare, Hammer, X, Check, Target, ChevronDown } from 'lucide-react';
 import { soundEngine } from './audio/soundEngine';
@@ -164,7 +165,7 @@ export default function App() {
 
       const engine = new GameEngine(mode, difficulty, mapId, campaignId, matchConfig);
       engineRef.current = engine;
-      if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')) { (window as any).__engine = engine; (window as any).__camRef = cameraRef; } // test hook, only with ?debug
+      if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')) { (window as any).__engine = engine; (window as any).__camRef = cameraRef; (window as any).__tcamRef = targetCameraRef; } // test hook, only with ?debug
 
       const playerHQ = engine.buildings.find(b => b.type === 'headquarters' && b.faction === 'player');
       const startX = playerHQ ? playerHQ.pixelX : engine.mapData.playerSpawn.x;
@@ -369,7 +370,7 @@ export default function App() {
     const ok = engine.importSaveData(saveData);
     if (ok) {
       engineRef.current = engine;
-      if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')) { (window as any).__engine = engine; (window as any).__camRef = cameraRef; } // test hook, only with ?debug
+      if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')) { (window as any).__engine = engine; (window as any).__camRef = cameraRef; (window as any).__tcamRef = targetCameraRef; } // test hook, only with ?debug
       const playerHQ = engine.buildings.find(b => b.type === 'headquarters' && b.faction === 'player');
       const startX = playerHQ ? playerHQ.pixelX : engine.mapData.playerSpawn.x;
       const startY = playerHQ ? playerHQ.pixelY : engine.mapData.playerSpawn.y;
@@ -665,9 +666,7 @@ export default function App() {
     if (!engine || selectedUnitIds.length === 0) return;
 
     const hitRadius = Math.max(34, 34 / cameraRef.current.zoom);
-    const clickedEnemyUnit = engine.units.find(
-      u => u.faction === 'enemy' && u.hp > 0 && Math.hypot(u.x - world.x, u.y - world.y) <= hitRadius
-    );
+    const clickedEnemyUnit = pickUnit(engine.units, world, hitRadius, 'enemy');
 
     const clickedEnemyBuilding = engine.buildings.find(
       b => b.faction === 'enemy' && b.hp > 0 && Math.hypot(b.pixelX - world.x, b.pixelY - world.y) <= Math.max(48, b.width * 20 + 12)
@@ -921,9 +920,7 @@ export default function App() {
     // If player has units currently selected:
     if (selectedUnitIdsRef.current.length > 0) {
       // 5a. Check if tapping an enemy unit
-      const clickedEnemy = engine.units.find(
-        u => u.faction === 'enemy' && u.hp > 0 && Math.hypot(u.x - world.x, u.y - world.y) <= unitHitRadius
-      );
+      const clickedEnemy = pickUnit(engine.units, world, unitHitRadius, 'enemy');
       // 5b. Check if tapping an enemy building
       const clickedEnemyBuilding = engine.buildings.find(
         b => b.faction === 'enemy' && b.hp > 0 && Math.hypot(b.pixelX - world.x, b.pixelY - world.y) <= Math.max(48, b.width * 20 + 12)
@@ -935,9 +932,7 @@ export default function App() {
       }
 
       // 5c. Check if tapping another friendly unit to switch selection
-      const clickedOtherFriendly = engine.units.find(
-        u => u.faction === 'player' && u.hp > 0 && Math.hypot(u.x - world.x, u.y - world.y) <= unitHitRadius
-      );
+      const clickedOtherFriendly = pickUnit(engine.units, world, unitHitRadius, 'player');
 
       if (clickedOtherFriendly && !isTouchMultiSelect && !selectedUnitIdsRef.current.includes(clickedOtherFriendly.id)) {
         engine.units.forEach(u => (u.selected = u.id === clickedOtherFriendly.id));
@@ -956,9 +951,7 @@ export default function App() {
     }
 
     // 6. No units currently selected: Check if tapping a friendly unit to select
-    const clickedUnit = engine.units.find(
-      u => u.faction === 'player' && u.hp > 0 && Math.hypot(u.x - world.x, u.y - world.y) <= unitHitRadius
-    );
+    const clickedUnit = pickUnit(engine.units, world, unitHitRadius, 'player');
 
     if (clickedUnit) {
       if (isTouchMultiSelect) {
@@ -1118,7 +1111,7 @@ export default function App() {
         const maxY = Math.max(start.y, end.y);
 
         const insideUnits = engine.units.filter(
-          u => u.faction === 'player' && u.hp > 0 && u.x >= minX && u.x <= maxX && u.y >= minY && u.y <= maxY
+          u => u.faction === 'player' && u.hp > 0 && u.x >= minX && u.x <= maxX && ((u.y >= minY && u.y <= maxY) || (unitAimPoint(u).y >= minY && unitAimPoint(u).y <= maxY))
         );
 
         if (insideUnits.length > 0) {
@@ -1148,9 +1141,7 @@ export default function App() {
     const engine = engineRef.current;
     if (!engine) return;
 
-    const clickedUnit = engine.units.find(
-      u => u.faction === 'player' && u.hp > 0 && Math.hypot(u.x - world.x, u.y - world.y) <= 38
-    );
+    const clickedUnit = pickUnit(engine.units, world, 38, 'player');
 
     if (clickedUnit) {
       // DOUBLE TAP UNIT: Select all units of same type and focus camera on unit!
@@ -1322,7 +1313,7 @@ export default function App() {
         const maxY = Math.max(box.start.y, box.current.y);
 
         const insideUnits = engine.units.filter(
-          u => u.faction === 'player' && u.hp > 0 && u.x >= minX && u.x <= maxX && u.y >= minY && u.y <= maxY
+          u => u.faction === 'player' && u.hp > 0 && u.x >= minX && u.x <= maxX && ((u.y >= minY && u.y <= maxY) || (unitAimPoint(u).y >= minY && unitAimPoint(u).y <= maxY))
         );
 
         if (insideUnits.length > 0) {
@@ -1384,9 +1375,7 @@ export default function App() {
     if (!engine) return;
     const world = screenToWorld(e.clientX, e.clientY);
 
-    const clickedUnit = engine.units.find(
-      u => u.faction === 'player' && u.hp > 0 && Math.hypot(u.x - world.x, u.y - world.y) <= 25
-    );
+    const clickedUnit = pickUnit(engine.units, world, 25, 'player');
 
     if (clickedUnit) {
       const sameTypeUnits = engine.units.filter(u => u.faction === 'player' && u.hp > 0 && u.type === clickedUnit.type);
