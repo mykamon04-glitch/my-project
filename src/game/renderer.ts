@@ -42,6 +42,31 @@ export class TacticalRenderer {
   private shadowLvl: ShadowLevel = 'medium';
   private pStride = 1;
   private art = new UnitArtRenderer();
+  /** Soft radial sprites (V12): one small canvas per colour, reused instead of a new gradient per particle / tile. */
+  private glows = new Map<string, HTMLCanvasElement>();
+  private glow(color: string, mid = 0.6): HTMLCanvasElement {
+    const key = color + mid;
+    let c = this.glows.get(key);
+    if (!c) {
+      c = document.createElement('canvas');
+      c.width = c.height = 32;
+      const g = c.getContext('2d')!;
+      const gr = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+      gr.addColorStop(0, color);
+      gr.addColorStop(mid, color.replace(/rgba?\(([^,]+),([^,]+),([^,)]+)(,[^)]+)?\)/, (_m, r, gg, b) => `rgba(${r},${gg},${b},0.45)`));
+      gr.addColorStop(1, color.replace(/rgba?\(([^,]+),([^,]+),([^,)]+)(,[^)]+)?\)/, (_m, r, gg, b) => `rgba(${r},${gg},${b},0)`));
+      g.fillStyle = gr;
+      g.fillRect(0, 0, 32, 32);
+      if (this.glows.size > 64) this.glows.clear();
+      this.glows.set(key, c);
+    }
+    return c;
+  }
+  private static hexRgb(hex: string): string {
+    const h = hex.replace('#', '');
+    const n = parseInt(h.length === 3 ? h.split('').map(x => x + x).join('') : h, 16);
+    return `rgb(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255})`;
+  }
   private viewMinX: number = -9999;
   private viewMaxX: number = 9999;
   private viewMinY: number = -9999;
@@ -427,25 +452,18 @@ export class TacticalRenderer {
             const depX = px + offsetX2;
             const depY = py + offsetY2;
             const depR = 9 + noise * 7;
-            const g = ctx.createRadialGradient(depX, depY, 0, depX, depY, depR);
-            g.addColorStop(0, eyeComfort ? 'rgba(70,60,44,0.22)' : 'rgba(92,78,56,0.26)');
-            g.addColorStop(0.6, 'rgba(84,72,52,0.12)');
-            g.addColorStop(1, 'rgba(84,72,52,0)');
-            ctx.fillStyle = g;
-            ctx.save();
-            ctx.translate(depX, depY); ctx.scale(1, 0.6 + noise * 0.25); ctx.translate(-depX, -depY);
-            ctx.fillRect(depX - depR, depY - depR, depR * 2, depR * 2);
-            ctx.restore();
+            const eh = depR * (0.6 + noise * 0.25);
+            ctx.globalAlpha = eyeComfort ? 0.22 : 0.26;
+            ctx.drawImage(this.glow('rgb(92,78,56)'), depX - depR, depY - eh, depR * 2, eh * 2);
+            ctx.globalAlpha = 1;
           }
 
           // Subtle organic moss patch (sparse, low-contrast, soft-edged)
           if (!eyeComfort && noise > 0.88) {
             const mx = px + offsetX1, my = py + offsetY1;
-            const g = ctx.createRadialGradient(mx, my, 0, mx, my, 7);
-            g.addColorStop(0, 'rgba(52, 84, 50, 0.28)');
-            g.addColorStop(1, 'rgba(52, 84, 50, 0)');
-            ctx.fillStyle = g;
-            ctx.fillRect(mx - 7, my - 7, 14, 14);
+            ctx.globalAlpha = 0.28;
+            ctx.drawImage(this.glow('rgb(52,84,50)', 0.4), mx - 7, my - 7, 14, 14);
+            ctx.globalAlpha = 1;
           }
         }
 
@@ -2510,23 +2528,15 @@ export class TacticalRenderer {
         ctx.beginPath();
         ctx.ellipse(p.x, p.y, size * (0.25 + age), size * (0.25 + age) * 0.62, 0, 0, Math.PI * 2);
         ctx.stroke();
-      } else if (p.type === 'fire' || p.type === 'spark') {
+      } else if (p.type === 'fire' || p.type === 'spark' || p.type === 'heal') {
         // additive glow that shrinks as it cools
-        const r = size * (p.type === 'fire' ? 1.6 - age * 0.9 : 1);
+        const r = Math.max(0.5, size * (p.type === 'fire' ? 1.6 - age * 0.9 : 1));
         ctx.globalCompositeOperation = 'lighter';
-        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, Math.max(0.5, r));
-        g.addColorStop(0, p.color);
-        g.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+        ctx.drawImage(this.glow(p.color.startsWith('#') ? TacticalRenderer.hexRgb(p.color) : p.color, 0.35), p.x - r, p.y - r, r * 2, r * 2);
       } else if (p.type === 'smoke' || p.type === 'dust') {
         // soft puff that grows while it thins
         const r = size * (1 + age * 1.4);
-        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
-        g.addColorStop(0, p.color);
-        g.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+        ctx.drawImage(this.glow(p.color.startsWith('#') ? TacticalRenderer.hexRgb(p.color) : p.color, 0.5), p.x - r, p.y - r, r * 2, r * 2);
       } else {
         ctx.beginPath();
         ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
