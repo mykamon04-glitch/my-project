@@ -4,13 +4,17 @@
  */
 
 import { pickUnit, unitAimPoint } from './game/unitPicking';
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useReducer } from 'react';
 import { Eye, EyeOff, Crosshair, Layers, RotateCcw, Navigation, CheckSquare, Hammer, X, Check, Target, ChevronDown } from 'lucide-react';
 import { soundEngine } from './audio/soundEngine';
 import { BaseAdvisorModal } from './components/BaseAdvisorModal';
 import { ConstructionControlBar, PlacementState } from './components/ConstructionControlBar';
 import { GameModal } from './components/GameModal';
-import { MainMenu } from './components/MainMenu';
+import { CareerOverlay, DEFAULT_SETUP, MainMenuScreen, MapSelectScreen, MatchSetupScreen, SetupState, setupToConfig } from './components/screens/MenuScreens';
+import { ConfirmDialog, HelpOverlay, PauseMenu } from './components/nav/NavUI';
+import { initialNav, navReducer, shouldPause, topOverlay } from './game/navigation';
+import { latestSaveSlot, writeSaveSlot } from './components/SaveLoadModal';
+import { CAMPAIGN_MISSIONS } from './data/gameData';
 import { SaveLoadModal } from './components/SaveLoadModal';
 import { SettingsModal } from './components/SettingsModal';
 import { MobileTopHUD } from './components/mobile/MobileTopHUD';
@@ -43,13 +47,25 @@ export default function App() {
   const threeRendererRef = useRef<TacticalThreeRenderer | null>(null);
 
   // UI state
-  const [inMainMenu, setInMainMenu] = useState<boolean>(true);
+  // V14 central navigation: screens + overlay stack (replaces inMainMenu / isSettingsOpen / isSaveLoadOpen booleans)
+  const [nav, dispatchNav] = useReducer(navReducer, initialNav);
+  const navRef = useRef(nav);
+  navRef.current = nav;
+  const inMainMenu = nav.screen !== 'gameplay';
+  const topNav = topOverlay(nav);
+  const pausedByNavRef = useRef(false);
+  const settingsBackRef = useRef<(() => void) | null>(null);
+  const [devToolsSignal, setDevToolsSignal] = useState(0);
+  const [setup, setSetupState] = useState<SetupState>(() => {
+    try { return { ...DEFAULT_SETUP, ...JSON.parse(localStorage.getItem('iron_dominion_setup') || '{}') }; } catch { return DEFAULT_SETUP; }
+  });
+  const setSetup = (s: SetupState) => { setSetupState(s); try { localStorage.setItem('iron_dominion_setup', JSON.stringify(s)); } catch { /* ignore */ } };
   const [is3DMode, setIs3DMode] = useState<boolean>(false);
   const [modalType, setModalType] = useState<'victory' | 'defeat' | 'briefing' | 'settings' | null>(null);
   // V12: outcome of a finished match (battlefield stays viewable, read-only, until a new match starts)
   const [matchOver, setMatchOver] = useState<'victory' | 'defeat' | null>(null);
-  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
-  const [isSaveLoadOpen, setIsSaveLoadOpen] = useState<boolean>(false);
+  const isSettingsOpen = nav.overlays.some(o => o.id === 'settings');
+  const isSaveLoadOpen = nav.overlays.some(o => o.id === 'save_load');
   const [isAdvisorOpen, setIsAdvisorOpen] = useState<boolean>(false);
   const [showRadar, setShowRadar] = useState<boolean>(true);
   const [showObjectives, setShowObjectives] = useState<boolean>(true);
@@ -102,6 +118,10 @@ export default function App() {
   // Selected Entities
   const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
+  const selectedBuildingIdRef = useRef<string | null>(null);
+  selectedBuildingIdRef.current = selectedBuildingId;
+  const activeInteractionModeRef = useRef<string>('NORMAL');
+  const handleCancelPlacementRef = useRef<(() => void) | null>(null);
 
   // Fullscreen Handler
   const toggleFullscreen = useCallback(() => {
@@ -187,8 +207,9 @@ export default function App() {
       activePlacementRef.current = null;
       setIsNukeTargeting(false);
       setActiveInteractionMode('NORMAL');
-      setInMainMenu(false);
+      dispatchNav({ type: 'start_match' });
       setMatchOver(null);
+      pausedByNavRef.current = false;
 
       if (mode === 'campaign') {
         setModalType('briefing');
@@ -389,15 +410,94 @@ export default function App() {
       setSelectedUnitIds([]);
       setSelectedBuildingId(null);
       setActiveInteractionMode('NORMAL');
-      setInMainMenu(false);
+      modalTypeRef.current = null;
+      setModalType(null);
+      dispatchNav({ type: 'start_match' });
+      pausedByNavRef.current = false;
     }
   }, []);
 
   const restartCurrentGame = useCallback(() => {
     if (!engineRef.current) return;
     const current = engineRef.current;
-    startNewGame(current.mode, current.difficulty, current.mapData.id, current.currentMission?.id);
+    startNewGame(current.mode, current.difficulty, current.mapData.id, current.currentMission?.id, current.matchConfig); // same map seed & setup
   }, [startNewGame]);
+
+  /** Leave the match for the main menu: stop the simulation and release the match (V14). */
+  const goHome = useCallback(() => {
+    const e = engineRef.current;
+    if (e) e.isPaused = true;
+    engineRef.current = null;
+    threeRendererRef.current = null;
+    modalTypeRef.current = null;
+    setModalType(null);
+    setSelectedUnitIds([]);
+    setSelectedBuildingId(null);
+    activePlacementRef.current = null;
+    setActivePlacement(null);
+    setActiveInteractionMode('NORMAL');
+    setIsAdvisorOpen(false);
+    try { soundEngine.stopAmbientMusic?.(); } catch { /* optional */ }
+    dispatchNav({ type: 'home', force: true });
+  }, []);
+  /** Home button: asks first when an active match could be lost. */
+  const requestHome = useCallback(() => {
+    const e = engineRef.current;
+    if (navRef.current.screen === 'gameplay' && e && !e.matchEnd) dispatchNav({ type: 'home' });
+    else goHome();
+  }, [goHome]);
+  const startFromSetup = useCallback((s: SetupState, quick = false) => {
+    const mode = quick ? 'sandbox' : s.mode;
+    if (mode === 'campaign') {
+      const mission = CAMPAIGN_MISSIONS.find(m => m.id === s.campaignId) ?? CAMPAIGN_MISSIONS[0];
+      startNewGame('campaign', mission.enemyDifficulty, mission.mapId, mission.id, setupToConfig({ ...s, mapId: mission.mapId, seed: null }));
+      return;
+    }
+    const debugMap = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug') ? new URLSearchParams(window.location.search).get('map') : null;
+    const ss = debugMap ? { ...s, mapId: debugMap, seed: null } : s;
+    startNewGame(mode, ss.difficulty, ss.mapId, undefined, setupToConfig(ss));
+  }, [startNewGame]);
+
+  // Pause the match while any overlay is open over it; resume (only what navigation paused) when it closes.
+  useEffect(() => {
+    const e = engineRef.current;
+    if (!e) return;
+    const want = shouldPause(nav);
+    if (want && !e.isPaused) { e.isPaused = true; pausedByNavRef.current = true; }
+    else if (!want && pausedByNavRef.current) { e.isPaused = false; pausedByNavRef.current = false; }
+  }, [nav]);
+
+  // Back: Esc, Android system back and browser back all route here.
+  const handleNavBack = useCallback(() => {
+    const n = navRef.current;
+    const top = topOverlay(n);
+    if (top?.id === 'settings' && settingsBackRef.current) { settingsBackRef.current(); return; }
+    if (top) { dispatchNav({ type: 'back' }); return; }
+    if (modalTypeRef.current) { modalTypeRef.current = null; setModalType(null); return; } // results / briefing -> battlefield
+    if (n.screen === 'gameplay') {
+      if (activePlacementRef.current) { handleCancelPlacementRef.current?.(); return; }
+      if (activeInteractionModeRef.current !== 'NORMAL') { setActiveInteractionMode('NORMAL'); return; }
+      if (selectedUnitIdsRef.current.length > 0 || selectedBuildingIdRef.current) {
+        const e = engineRef.current;
+        e?.units.forEach(u => (u.selected = false)); e?.buildings.forEach(b => (b.selected = false));
+        selectedUnitIdsRef.current = [];
+        setSelectedUnitIds([]); setSelectedBuildingId(null);
+        return;
+      }
+    }
+    dispatchNav({ type: 'back' });
+  }, []);
+  const handleNavBackRef = useRef(handleNavBack);
+  handleNavBackRef.current = handleNavBack;
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => { if (ev.code === 'Escape') { ev.preventDefault(); handleNavBackRef.current(); } };
+    window.addEventListener('keydown', onKey);
+    // Android system back / browser back: keep one history entry as a guard and turn "back" into in-game navigation
+    try { history.pushState({ ironNav: 1 }, ''); } catch { /* ignore */ }
+    const onPop = () => { try { history.pushState({ ironNav: 1 }, ''); } catch { /* ignore */ } handleNavBackRef.current(); };
+    window.addEventListener('popstate', onPop);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('popstate', onPop); };
+  }, []);
 
   // Autosave Checkpoint (every 60s)
   useEffect(() => {
@@ -853,11 +953,13 @@ export default function App() {
     }
   }, []);
 
+  activeInteractionModeRef.current = activeInteractionMode;
   const handleCancelPlacement = useCallback(() => {
     activePlacementRef.current = null;
     setActivePlacement(null);
     soundEngine.playClick();
   }, []);
+  handleCancelPlacementRef.current = handleCancelPlacement;
 
   // --- Tap / Click Selection & Targeting Handler ---
   const handlePrimaryActionAtWorld = useCallback((world: Vector2, isTouch: boolean = false) => {
@@ -1451,16 +1553,8 @@ export default function App() {
       }
 
       if (e.code === 'Escape') {
-        if (activePlacementRef.current) {
-          handleCancelPlacement();
-          return;
-        }
         setIsNukeTargeting(false);
-        engine.units.forEach(u => (u.selected = false));
-        engine.buildings.forEach(b => (b.selected = false));
-        setSelectedUnitIds([]);
-        setSelectedBuildingId(null);
-        return;
+        return; // V14: Esc is handled by handleNavBack (placement, command mode, selection, then pause)
       }
 
       if (e.code === 'F2') {
@@ -1556,16 +1650,25 @@ export default function App() {
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-slate-950 font-sans select-none">
       {inMainMenu ? (
-        <MainMenu
-          onStartGame={startNewGame}
-          onLoadSavedGame={loadSavedGame}
-          onToggleMute={toggleMute}
-          isMuted={isMuted}
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          onOpenSaveLoad={() => setIsSaveLoadOpen(true)}
-          isFullscreen={isFullscreen}
-          onToggleFullscreen={toggleFullscreen}
-        />
+        nav.screen === 'map_select' ? (
+          <MapSelectScreen setup={setup} onChange={setSetup} onBack={() => dispatchNav({ type: 'back' })} onHome={requestHome}
+            onContinue={() => dispatchNav({ type: 'go', screen: 'match_setup' })} />
+        ) : nav.screen === 'match_setup' ? (
+          <MatchSetupScreen setup={setup} onChange={setSetup} onBack={() => dispatchNav({ type: 'back' })} onHome={requestHome}
+            onChangeMap={() => dispatchNav({ type: 'go', screen: 'map_select' })} onStart={() => startFromSetup(setup)} />
+        ) : (
+          <MainMenuScreen
+            latestSave={latestSaveSlot()}
+            onContinue={() => { const d = latestSaveSlot(); if (d) loadSavedGame(d); }}
+            onNewGame={() => dispatchNav({ type: 'go', screen: 'match_setup' })}
+            onMapSelect={() => dispatchNav({ type: 'go', screen: 'map_select' })}
+            onLoad={() => dispatchNav({ type: 'open', overlay: { id: 'save_load', mode: 'load' } })}
+            onSettings={() => dispatchNav({ type: 'open', overlay: { id: 'settings', category: null } })}
+            onHelp={() => dispatchNav({ type: 'open', overlay: { id: 'help' } })}
+            onCareer={() => dispatchNav({ type: 'open', overlay: { id: 'career' } })}
+            onQuickDeploy={() => startFromSetup(setup, true)}
+          />
+        )
       ) : (
         <>
           {/* REAL-TIME 3D BATTLEFIELD CANVAS (Three.js PBR) */}
@@ -1635,7 +1738,7 @@ export default function App() {
               {!isCinematicMode && (
                 <MobileTopHUD
                   engine={engine}
-                  onOpenSettings={() => setIsSettingsOpen(true)}
+                  onOpenSettings={() => dispatchNav({ type: 'open', overlay: { id: 'settings', category: null } })}
                   onSelectAllTroops={() => {
                     const ids = engine.selectAllUnits();
                     selectedUnitIdsRef.current = ids;
@@ -1645,7 +1748,7 @@ export default function App() {
                     if (ids.length > 0) soundEngine.playSelectUnit();
                     else soundEngine.playError();
                   }}
-                  onOpenSaveLoad={() => setIsSaveLoadOpen(true)}
+                  onOpenSaveLoad={() => dispatchNav({ type: 'open', overlay: { id: 'save_load', mode: engineRef.current ? 'save' : 'load' } })}
                   onOpenAdvisor={() => setIsAdvisorOpen(true)}
                   onCenterHQ={handleCenterHQ}
                   onFitBase={handleFitBase}
@@ -1669,8 +1772,10 @@ export default function App() {
                   isFullscreen={isFullscreen}
                   onToggleFullscreen={toggleFullscreen}
                   onStartBuildingPlacement={handleStartPlacement}
-                  onExitToMenu={() => setInMainMenu(true)}
+                  onExitToMenu={requestHome}
                   onRefresh={() => setTick(t => t + 1)}
+                  onOpenMenu={() => dispatchNav({ type: 'open', overlay: { id: 'pause' } })}
+                  devToolsSignal={devToolsSignal}
                 />
               )}
 
@@ -1889,13 +1994,13 @@ export default function App() {
                   onSelectSquad={handleSelectSquad}
                   onSaveSquad={handleSaveSquad}
                   controlGroups={engine.controlGroups}
-                  onOpenSettings={() => setIsSettingsOpen(true)}
-                  onOpenSaveLoad={() => setIsSaveLoadOpen(true)}
+                  onOpenSettings={() => dispatchNav({ type: 'open', overlay: { id: 'settings', category: null } })}
+                  onOpenSaveLoad={() => dispatchNav({ type: 'open', overlay: { id: 'save_load', mode: engineRef.current ? 'save' : 'load' } })}
                   onToggleFullscreen={toggleFullscreen}
                   isFullscreen={isFullscreen}
                   onToggleMute={toggleMute}
                   isMuted={isMuted}
-                  onExitToMenu={() => setInMainMenu(true)}
+                  onExitToMenu={requestHome}
                   onCenterHQ={handleCenterHQ}
                   onFitBase={handleFitBase}
                   onToggleFollow={toggleFollow}
@@ -1946,19 +2051,10 @@ export default function App() {
               onClose={() => { modalTypeRef.current = null; setModalType(null); }}
               onStartNewGame={startNewGame}
               onRestartCurrent={restartCurrentGame}
-              onMainMenu={() => { modalTypeRef.current = null; setModalType(null); setInMainMenu(true); }}
+              onMainMenu={goHome}
             />
           )}
 
-          {/* SAVE / LOAD MODAL */}
-          {engine && (
-            <SaveLoadModal
-              engine={engine}
-              isOpen={isSaveLoadOpen}
-              onClose={() => setIsSaveLoadOpen(false)}
-              onLoadSuccess={() => setTick(t => t + 1)}
-            />
-          )}
 
           {/* BASE ADVISOR MODAL */}
           {engine && (
@@ -1972,15 +2068,75 @@ export default function App() {
         </>
       )}
 
-      {/* STANDALONE 8-TAB AAA SETTINGS MODAL */}
-      <SettingsModal
-        engine={engine}
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        onSettingsChanged={() => setTick(t => t + 1)}
-        isFullscreen={isFullscreen}
-        onToggleFullscreen={toggleFullscreen}
-      />
+      {/* V14 OVERLAYS: only the top of the navigation stack is shown */}
+      {topNav?.id === 'settings' && (
+        <SettingsModal
+          engine={engine && !inMainMenu ? engine : null}
+          isOpen
+          category={topNav.category}
+          onCategory={c => dispatchNav({ type: 'settings_category', category: c })}
+          onClose={() => dispatchNav({ type: 'close' })}
+          onHome={requestHome}
+          onResume={!inMainMenu ? () => dispatchNav({ type: 'close_all' }) : undefined}
+          onOpenSaveLoad={() => dispatchNav({ type: 'open', overlay: { id: 'save_load', mode: !inMainMenu ? 'save' : 'load' } })}
+          backRef={settingsBackRef}
+          onSettingsChanged={() => setTick(t => t + 1)}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={toggleFullscreen}
+        />
+      )}
+      {topNav?.id === 'save_load' && (
+        <SaveLoadModal
+          engine={!inMainMenu ? engineRef.current : null}
+          isOpen
+          mode={topNav.mode}
+          canSave={!engineRef.current?.matchEnd}
+          onClose={() => dispatchNav({ type: 'close' })}
+          onHome={requestHome}
+          onLoadData={d => loadSavedGame(d)}
+        />
+      )}
+      {topNav?.id === 'help' && <HelpOverlay onBack={() => dispatchNav({ type: 'close' })} onHome={requestHome} />}
+      {topNav?.id === 'career' && <CareerOverlay onBack={() => dispatchNav({ type: 'close' })} />}
+      {topNav?.id === 'pause' && engineRef.current && (
+        <PauseMenu
+          onResume={() => dispatchNav({ type: 'close' })}
+          onSave={() => dispatchNav({ type: 'open', overlay: { id: 'save_load', mode: 'save' } })}
+          onLoad={() => dispatchNav({ type: 'open', overlay: { id: 'save_load', mode: 'load' } })}
+          onSettings={() => dispatchNav({ type: 'open', overlay: { id: 'settings', category: null } })}
+          onHelp={() => dispatchNav({ type: 'open', overlay: { id: 'help' } })}
+          onRestart={() => dispatchNav({ type: 'open', overlay: { id: 'confirm', kind: 'restart_match' } })}
+          onMainMenu={requestHome}
+          canSave={!engineRef.current.matchEnd}
+          gameSpeed={engineRef.current.gameSpeed}
+          onSpeed={v => { const e = engineRef.current; if (e) { e.gameSpeed = v; e.settings.gameSpeed = v; } setTick(t => t + 1); }}
+          muted={isMuted}
+          onToggleMute={toggleMute}
+          fullscreen={isFullscreen}
+          onToggleFullscreen={toggleFullscreen}
+          onAdvisor={() => { dispatchNav({ type: 'close' }); setIsAdvisorOpen(true); }}
+          onDevTools={engineRef.current.mode === 'sandbox' || (typeof window !== 'undefined' && /[?&]debug=1/.test(window.location.search)) ? () => { dispatchNav({ type: 'close' }); setDevToolsSignal(n => n + 1); } : undefined}
+        />
+      )}
+      {topNav?.id === 'confirm' && topNav.kind === 'leave_match' && (
+        <ConfirmDialog
+          title="Leave this match?"
+          message="Progress since your last save will be lost unless you save now."
+          onCancel={() => dispatchNav({ type: 'close' })}
+          options={[
+            { label: 'Save and exit', tone: 'primary', testId: 'confirm-save-exit', onSelect: () => { const e = engineRef.current; if (e) writeSaveSlot('quicksave', e.exportSaveData('quicksave', 'Quick save')); goHome(); } },
+            { label: 'Exit without saving', tone: 'danger', testId: 'confirm-exit', onSelect: goHome },
+          ]}
+        />
+      )}
+      {topNav?.id === 'confirm' && topNav.kind === 'restart_match' && (
+        <ConfirmDialog
+          title="Restart the match?"
+          message="The current match is discarded and a new one starts on the same map."
+          onCancel={() => dispatchNav({ type: 'close' })}
+          options={[{ label: 'Restart match', tone: 'danger', testId: 'confirm-restart', onSelect: restartCurrentGame }]}
+        />
+      )}
     </div>
   );
 }

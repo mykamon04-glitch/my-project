@@ -330,7 +330,7 @@ export interface MapProp {
 export interface MapData {
   id: string;
   name: string;
-  biome: 'temperate' | 'desert' | 'snow' | 'urban' | 'volcanic' | 'industrial';
+  biome: 'temperate' | 'desert' | 'snow' | 'urban' | 'volcanic' | 'industrial' | 'mountain' | 'coastal';
   width: number; // in tiles
   height: number;
   tileSize: number;
@@ -339,6 +339,12 @@ export interface MapData {
   props: MapProp[];
   playerSpawn: Vector2;
   enemySpawn: Vector2;
+  // V14 seeded maps (absent on legacy maps)
+  seed?: number;
+  environment?: 'temperate' | 'desert' | 'urban' | 'mountain' | 'coastal';
+  elevation?: number[];                 // width*height, 0..1
+  params?: unknown;                     // generation parameters (MapGenParams)
+  validation?: unknown;                 // MapValidation report
 }
 
 export interface CampaignMission {
@@ -731,6 +737,13 @@ export interface MatchSetupConfig {
   fogOfWar: boolean;
   victoryCondition: 'annihilation' | 'destroy_hq' | 'domination';
   gameSpeed: number;
+  // V14 map generation
+  seed?: number;
+  resourceDensity?: 'low' | 'normal' | 'high';
+  forestDensity?: 'low' | 'normal' | 'high';
+  obstacleDensity?: 'low' | 'normal' | 'high';
+  roads?: boolean;
+  layout?: 'diagonal' | 'horizontal';
 }
 
 // ───────────── Match state (V12) ─────────────

@@ -18,8 +18,12 @@ const res = []; const ok = (n, p, i = '') => { res.push(p); console.log((p ? 'PA
   // the visible 2D game canvas (page also holds a hidden 3D canvas and a minimap)
   const gameCanvasWidth = () => p.evaluate(() => Math.max(...[...document.querySelectorAll('canvas')].filter(c => c.offsetParent !== null && c.getBoundingClientRect().width > 600).map(c => c.width)));
   const sample = async (ms) => { await p.evaluate(() => { window.__n = { clear: 0, ellipse: 0 }; }); await p.waitForTimeout(ms); return p.evaluate(() => ({ ...window.__n })); };
-  const openSettings = async () => { await p.locator('nav button').filter({ hasText: /^\s*MORE\s*$/ }).first().click(); await p.waitForTimeout(600); };
-  const closeSettings = async () => { await p.getByRole('button', { name: /CONFIRM/i }).last().click().catch(() => {}); await p.waitForTimeout(500); };
+  // V14 Settings: categories, Apply, Resume
+  const openSettings = async () => { await p.locator('nav button').filter({ hasText: /^\s*MORE\s*$/ }).first().click(); await p.waitForTimeout(400); await p.getByTestId('settings-cat-graphics').click(); await p.waitForTimeout(300); };
+  const closeSettings = async () => {
+    if (await p.getByTestId('settings-apply').isEnabled().catch(() => false)) await p.getByTestId('settings-apply').click();
+    await p.getByTestId('settings-resume').click().catch(() => {}); await p.waitForTimeout(500);
+  };
   const click = async (name) => { await p.getByRole('button', { name, exact: true }).first().click(); await p.waitForTimeout(350); };
 
   const baseW = await gameCanvasWidth();

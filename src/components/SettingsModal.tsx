@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { PRESET_LABELS, presetValues } from '../game/renderQuality';
 import {
   X,
@@ -27,15 +27,38 @@ import {
 import { soundEngine } from '../audio/soundEngine';
 import { GameEngine } from '../game/engine';
 import { DefensePolicy, GameSettings } from '../types/game';
+import type { SettingsCategory } from '../game/navigation';
+import { playerSettings, resetCategory, restoreSettings, sameSettings, saveSettings, snapshotSettings } from '../game/settingsStore';
+import { ConfirmDialog, ScreenHeader } from './nav/NavUI';
 
 interface SettingsModalProps {
   engine: GameEngine | null;
   isOpen: boolean;
+  /** Back from the category list: return to the screen Settings was opened from. */
   onClose: () => void;
   onSettingsChanged?: () => void;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  /** V14 navigation: the open category page (null = category list) */
+  category?: SettingsCategory | null;
+  onCategory?: (c: SettingsCategory | null) => void;
+  onHome?: () => void;
+  /** Present while a match is running: closes Settings and returns to the match. */
+  onResume?: () => void;
+  onOpenSaveLoad?: () => void;
+  /** App calls this for Esc / Android back so unsaved changes are never dropped silently. */
+  backRef?: React.MutableRefObject<(() => void) | null>;
 }
+
+const CATEGORIES: { id: SettingsCategory; label: string; hint: string; tabs: SettingsTab[] }[] = [
+  { id: 'graphics', label: 'Graphics', hint: 'Quality preset, resolution, effects, overlays', tabs: ['graphics', 'overlays'] },
+  { id: 'audio', label: 'Audio', hint: 'Volume, music, alerts', tabs: ['audio'] },
+  { id: 'controls', label: 'Controls', hint: 'Camera, touch and selection', tabs: ['controls'] },
+  { id: 'gameplay', label: 'Gameplay', hint: 'Speed, health bars, radar', tabs: ['gameplay', 'radar'] },
+  { id: 'ai', label: 'AI', hint: 'Automatic defence, repair and support', tabs: ['automation'] },
+  { id: 'accessibility', label: 'Accessibility', hint: 'Motion, contrast, text and touch size', tabs: ['accessibility'] },
+  { id: 'data', label: 'Save & Load', hint: 'Saved games, backups, factory reset', tabs: ['data'] },
+];
 
 type SettingsTab =
   | 'graphics'
@@ -55,15 +78,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSettingsChanged,
   isFullscreen = false,
   onToggleFullscreen,
+  category = null,
+  onCategory,
+  onHome,
+  onResume,
+  onOpenSaveLoad,
+  backRef,
 }) => {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('graphics');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
+  const [pending, setPending] = useState<null | { kind: 'leave'; then: () => void } | { kind: 'reset' }>(null);
   const [, setTick] = useState(0);
+  const snapshot = useRef<GameSettings | null>(null);
+  const live: GameSettings = engine?.settings || playerSettings();
+
+  // Snapshot the settings when Settings opens: Back can then discard un-applied changes, and Apply re-bases it.
+  useEffect(() => {
+    if (isOpen) snapshot.current = snapshotSettings(live);
+    else snapshot.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  const dirty = !!snapshot.current && !sameSettings(live, snapshot.current);
+  const guard = (then: () => void) => { if (dirty) setPending({ kind: 'leave', then }); else then(); };
+  const handleBack = () => {
+    if (pending) { setPending(null); return; }
+    if (category) { onCategory?.(null); return; }
+    guard(onClose);
+  };
+  if (backRef) backRef.current = isOpen ? handleBack : null;
 
   if (!isOpen) return null;
+  const activeTab = null as SettingsTab | null; // kept for the original tab bodies (category pages show several tabs)
+  void activeTab;
+  const shows = (t: SettingsTab) => !!category && CATEGORIES.find(c => c.id === category)!.tabs.includes(t);
 
-  const currentSettings: GameSettings = engine?.settings || {
+  const currentSettings: GameSettings = live;
+  const _legacyDefaults: GameSettings = {
     soundEnabled: true,
     musicEnabled: true,
     masterVolume: 0.8,
@@ -110,12 +161,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const notifyChange = (msg?: string) => {
     setTick(t => t + 1);
     if (onSettingsChanged) onSettingsChanged();
-    try {
-      localStorage.setItem('iron_dominion_settings', JSON.stringify(currentSettings));
-      localStorage.setItem('iron_dominion_graphics_quality', currentSettings.graphicsQuality);
-    } catch {
-      //
-    }
+    // V14: changes preview live; they are stored only when the player taps Apply (see applyChanges)
     if (msg) {
       setStatusMsg(msg);
       setTimeout(() => setStatusMsg(null), 2500);
@@ -209,48 +255,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     { id: 'data', label: 'Save & Data', icon: <Database className="w-4 h-4" /> },
   ];
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-3 sm:p-6 select-none animate-fadeIn">
-      <div className="relative w-full max-w-3xl bg-[#101820] border border-[#1C2933] rounded-2xl shadow-2xl text-[#F4F7FA] overflow-hidden flex flex-col max-h-[92vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#1C2933] bg-[#1C2933]/50">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[#173A32] border border-[#38B98A]/60 flex items-center justify-center text-[#38B98A] shadow-md">
-              <Sliders className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="text-sm sm:text-base font-display font-bold tracking-wider text-[#F4F7FA] uppercase">
-                Operations & Systems Configuration
-              </h2>
-              <p className="text-[10px] text-[#A9B8C5] font-mono">
-                Graphics engine, sound stage, tactical radar, and defensive automation
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg bg-[#1C2933] hover:bg-[#173A32] text-[#A9B8C5] hover:text-[#F4F7FA] transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+  const applyChanges = () => {
+    const ok = saveSettings(live);
+    snapshot.current = snapshotSettings(live);
+    setTick(t => t + 1);
+    setStatusMsg(ok ? 'Settings applied' : 'Applied for this session (storage unavailable)');
+    setTimeout(() => setStatusMsg(null), 2200);
+  };
+  const discardChanges = () => {
+    if (snapshot.current) restoreSettings(live, snapshot.current);
+    onSettingsChanged?.();
+    setTick(t => t + 1);
+  };
+  const cat = CATEGORIES.find(c => c.id === category);
+  const title = cat ? cat.label : 'Settings';
 
-        {/* Tab Strip */}
-        <div className="flex flex-wrap items-center gap-1 px-3 sm:px-4 py-2 border-b border-[#1C2933] bg-[#101820] shrink-0">
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-2.5 py-2 rounded-lg font-mono text-xs font-bold transition-all flex items-center gap-1.5 min-h-[38px] ${
-                activeTab === tab.id
-                  ? 'bg-[#173A32] text-[#38B98A] border border-[#38B98A]/60 shadow-sm'
-                  : 'text-[#A9B8C5] hover:text-[#F4F7FA] hover:bg-[#1C2933]/60'
-              }`}
-            >
-              {tab.icon}
-              <span>{tab.label.toUpperCase()}</span>
-            </button>
-          ))}
+  return (
+    <div className="fixed inset-0 z-[75] flex items-stretch justify-center bg-black/60 sm:items-center sm:p-6 select-none nx-fade" data-testid="settings-screen" data-category={category ?? ''}>
+      <div className="relative flex w-full max-w-3xl flex-col overflow-hidden bg-nx-bg text-nx-text sm:max-h-[92vh] sm:rounded-xl sm:border sm:border-nx-border nx-rise"
+        style={{ paddingTop: 'max(6px, env(safe-area-inset-top))', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
+        <div className="px-3 sm:px-4">
+          <ScreenHeader
+            title={title}
+            subtitle={cat ? undefined : dirty ? 'Unapplied changes' : undefined}
+            onBack={handleBack}
+            onHome={onHome ? () => guard(onHome) : undefined}
+          />
         </div>
 
         {/* Status Notification Toast */}
@@ -262,9 +292,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         )}
 
         {/* Content Body */}
-        <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4 text-xs font-mono">
+        <div className="px-3 pb-4 sm:px-6 overflow-y-auto flex-1 space-y-4 text-xs font-mono">
+          {!category && (
+            <nav className="grid grid-cols-1 gap-2 sm:grid-cols-2" aria-label="Settings categories" data-testid="settings-categories">
+              {CATEGORIES.map(c => (
+                <button key={c.id} onClick={() => onCategory?.(c.id)} data-testid={`settings-cat-${c.id}`}
+                  className="nx-solid flex items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors hover:bg-nx-surface2 active:scale-[0.99]">
+                  <span className="min-w-0">
+                    <span className="block text-[14px] font-semibold text-nx-text">{c.label}</span>
+                    <span className="block truncate text-[12px] text-nx-text2 font-sans">{c.hint}</span>
+                  </span>
+                  <span className="text-nx-text2">›</span>
+                </button>
+              ))}
+            </nav>
+          )}
+          {category === 'data' && onOpenSaveLoad && (
+            <button onClick={onOpenSaveLoad} className="nx-btn w-full" data-testid="settings-open-saveload">Open saved games</button>
+          )}
           {/* TAB 1: GRAPHICS */}
-          {activeTab === 'graphics' && (
+          {shows('graphics') && (
             <div className="space-y-4">
               {/* IMMERSIVE FULL SCREEN DISPLAY CARD */}
               <div className="p-3.5 bg-gradient-to-r from-[#173A32]/60 to-[#16212c] border border-[#38B98A]/40 rounded-xl space-y-2.5">
@@ -591,7 +638,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
           {/* TAB: TACTICAL OVERLAYS (Priority 1: All OFF by default) */}
-          {activeTab === 'overlays' && (
+          {shows('overlays') && (
             <div className="space-y-4">
               <div className="p-3 bg-[#1C2933]/40 border border-[#1C2933] rounded-xl flex items-center justify-between text-xs">
                 <div>
@@ -742,7 +789,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
           {/* TAB 2: AUDIO */}
-          {activeTab === 'audio' && (
+          {shows('audio') && (
             <div className="space-y-4">
               <div className="p-3.5 bg-[#1C2933]/50 border border-[#1C2933] rounded-xl space-y-3">
                 <div className="flex justify-between items-center">
@@ -821,7 +868,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
           {/* TAB 3: CONTROLS & CAMERA */}
-          {activeTab === 'controls' && (
+          {shows('controls') && (
             <div className="space-y-4">
               <div className="p-3.5 bg-[#1C2933]/50 border border-[#1C2933] rounded-xl space-y-3">
                 <span className="text-[#A9B8C5] block font-bold text-[11px]">MOBILE CAMERA CONFIGURATION</span>
@@ -1003,7 +1050,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
           {/* TAB 4: AUTOMATION & AI COMMANDER */}
-          {activeTab === 'automation' && (
+          {shows('automation') && (
             <div className="space-y-4">
               <div className="p-3.5 bg-[#1C2933]/50 border border-[#1C2933] rounded-xl space-y-3">
                 <div className="flex justify-between items-center">
@@ -1121,7 +1168,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
           {/* TAB 5: RADAR SENSOR */}
-          {activeTab === 'radar' && (
+          {shows('radar') && (
             <div className="space-y-4">
               <div className="p-3.5 bg-[#1C2933]/50 border border-[#1C2933] rounded-xl space-y-3">
                 <div className="flex justify-between items-center">
@@ -1236,7 +1283,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
           {/* TAB 6: GAMEPLAY */}
-          {activeTab === 'gameplay' && (
+          {shows('gameplay') && (
             <div className="space-y-4">
               <div className="p-3.5 bg-[#1C2933]/50 border border-[#1C2933] rounded-xl space-y-3">
                 <div className="flex justify-between items-center">
@@ -1372,7 +1419,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
           {/* TAB 7: ACCESSIBILITY */}
-          {activeTab === 'accessibility' && (
+          {shows('accessibility') && (
             <div className="space-y-4">
               <div className="p-3.5 bg-[#1C2933]/50 border border-[#1C2933] rounded-xl space-y-3">
                 <div className="flex justify-between items-center">
@@ -1434,7 +1481,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
           {/* TAB 8: SAVE & DATA */}
-          {activeTab === 'data' && (
+          {shows('data') && (
             <div className="space-y-4">
               <div className="p-3.5 bg-[#1C2933]/50 border border-[#1C2933] rounded-xl space-y-3">
                 <span className="text-[#A9B8C5] block font-bold text-[11px]">SAVE DATA BACKUP & RESTORE</span>
@@ -1495,16 +1542,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
         </div>
 
-        {/* Footer */}
-        <div className="px-5 py-3 border-t border-[#1C2933] bg-[#101820] flex justify-between items-center">
-          <span className="text-[10px] text-[#A9B8C5] font-mono">Changes persist automatically across sessions.</span>
-          <button
-            onClick={onClose}
-            className="px-6 py-2 rounded-lg bg-[#38B98A] hover:bg-[#38B98A]/90 text-[#101820] font-display font-bold text-xs uppercase tracking-wider transition-colors shadow-lg"
-          >
-            CONFIRM & CLOSE
-          </button>
+        {/* Footer: Resume (in a match), Reset this category, Apply */}
+        <div className="flex flex-wrap items-center gap-2 border-t border-nx-border bg-nx-surface px-3 py-2.5 sm:px-5"
+          style={{ paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
+          {onResume && (
+            <button onClick={() => guard(onResume)} className="nx-btn" data-testid="settings-resume">Resume game</button>
+          )}
+          <div className="ml-auto flex gap-2">
+            {category && category !== 'data' && (
+              <button onClick={() => setPending({ kind: 'reset' })} className="nx-btn nx-btn-ghost" data-testid="settings-reset">Reset to default</button>
+            )}
+            <button onClick={applyChanges} disabled={!dirty} className="nx-btn nx-btn-primary" data-testid="settings-apply">Apply</button>
+          </div>
         </div>
+        {pending?.kind === 'leave' && (
+          <ConfirmDialog
+            title="Apply your changes?"
+            message="Some settings were changed but not applied."
+            onCancel={() => setPending(null)}
+            options={[
+              { label: 'Apply and continue', tone: 'primary', testId: 'confirm-apply', onSelect: () => { applyChanges(); const t = pending.then; setPending(null); t(); } },
+              { label: 'Discard changes', tone: 'danger', testId: 'confirm-discard', onSelect: () => { discardChanges(); const t = pending.then; setPending(null); t(); } },
+            ]}
+          />
+        )}
+        {pending?.kind === 'reset' && category && (
+          <ConfirmDialog
+            title={`Reset ${cat?.label ?? ''} settings?`}
+            message="This category returns to its default values. Tap Apply to keep the result."
+            onCancel={() => setPending(null)}
+            options={[{ label: 'Reset to default', tone: 'danger', testId: 'confirm-reset', onSelect: () => { resetCategory(live, category); onSettingsChanged?.(); setPending(null); setTick(t => t + 1); } }]}
+          />
+        )}
       </div>
     </div>
   );

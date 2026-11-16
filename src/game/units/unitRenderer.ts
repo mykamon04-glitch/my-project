@@ -282,6 +282,14 @@ export class UnitArtRenderer {
     }
   }
 
+  /** Abandoned vehicle on a V14 map (decoration): the burnt-out wreck model of a real vehicle type. */
+  drawPropWreck(ctx: CanvasRenderingContext2D, x: number, y: number, rotation: number, variant: number) {
+    const type = ['logistics_truck', 'apc', 'main_battle_tank'][variant % 3];
+    const p = this.cache.preset;
+    const e = this.cache.get({ type, faction: 'player', layer: 'wreck', dir: quantDir(rotation, p.bodyDirs), dirs: p.bodyDirs, flat: this.flat }, true);
+    if (e) { ctx.save(); ctx.globalAlpha = 0.92; this.blit(ctx, e, x, y); ctx.restore(); }
+  }
+
   /** Casualty, burnt-out vehicle or crashed aircraft. */
   drawWreck(ctx: CanvasRenderingContext2D, w: Wreckage) {
     const kind = unitKind(w.type);

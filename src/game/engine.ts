@@ -4,8 +4,10 @@
  */
 
 import { bodyHeight, muzzleOffset } from './units/models';
+import { settingsForMatch } from './settingsStore';
+import { buildMap, MapOptions } from './maps/catalog';
 import { soundEngine } from '../audio/soundEngine';
-import { BUILDING_CONFIGS, CAMPAIGN_MISSIONS, MAP_PRESETS, TECH_UPGRADES, UNIT_CONFIGS } from '../data/gameData';
+import { BUILDING_CONFIGS, CAMPAIGN_MISSIONS, TECH_UPGRADES, UNIT_CONFIGS } from '../data/gameData';
 import {
   emptyMatchStats,
   MatchEnd,
@@ -251,8 +253,8 @@ export class GameEngine {
     this.difficulty = difficulty;
     this.matchConfig = matchConfig;
     if (matchConfig?.victoryCondition) this.victoryCondition = matchConfig.victoryCondition;
-    const preset = MAP_PRESETS[mapId] || MAP_PRESETS.verdant_valley;
-    this.mapData = preset.generator(matchConfig?.mapSize);
+    // V14: seeded, validated battlefield (legacy map ids resolve to the matching V14 environment)
+    this.mapData = buildMap(mapId, mapOptionsFrom(matchConfig));
     this.weather = this.mapData.biome === 'snow' ? 'snow' : this.mapData.biome === 'desert' ? 'dust_storm' : 'clear';
     this.pathGrid = new PathfindingGrid(this.mapData);
     this.ai = new EnemyAI(difficulty, this.mapData);
@@ -276,39 +278,8 @@ export class GameEngine {
     const initSpeed = matchConfig?.gameSpeed ?? 1.0;
     this.gameSpeed = initSpeed;
 
-    this.settings = {
-      soundEnabled: true,
-      musicEnabled: true,
-      masterVolume: 0.8,
-      sfxVolume: 0.85,
-      musicVolume: 0.35,
-      showHealthBars: 'damaged',
-      gameSpeed: initSpeed,
-      fogOfWarEnabled: fogSetting,
-      weatherEffects: true,
-      combatEffects: true,
-      smokeDensity: 'low',
-      unitVisibility: 'standard',
-      dayNightCycle: false,
-      graphicsQuality: (typeof localStorage !== 'undefined' ? (localStorage.getItem('iron_dominion_graphics_quality') as any) : null) || 'ultra',
-      screenShake: 0.0, // PRIORITY 1: Screen shake disabled by default
-      showDamageNumbers: true,
-      eyeComfortMode: false,
-      overlays: {
-        attackRange: false,
-        radarCoverage: false,
-        defenseZones: false,
-        patrolRoutes: false,
-        buildingFootprints: false,
-        unitSelection: true,
-        enemyDetection: false,
-        resourceLocations: false,
-        pathfindingDebug: false,
-      },
-      supportRatio: 7,
-      autoHeal: true,
-      autoRepair: true,
-    };
+    // V14: start from the player's stored settings; the match keeps its own speed and fog setup. Camera shake stays off.
+    this.settings = settingsForMatch({ gameSpeed: initSpeed, fogOfWarEnabled: fogSetting, screenShake: 0 });
 
     if (mode === 'campaign' && campaignMissionId) {
       const mission = CAMPAIGN_MISSIONS.find(m => m.id === campaignMissionId);
@@ -1517,13 +1488,13 @@ export class GameEngine {
           const d = Math.hypot(u.x - p.x, u.y - p.y);
           if (d <= p.splashRadius) {
             const falloff = 1 - (d / p.splashRadius) * 0.5;
-            const dmg = calculateDamage(
+            const dmg = Math.round(calculateDamage(
               p.type,
               'vehicle',
               UNIT_CONFIGS[u.type].category,
               p.damage * falloff,
               u.armor
-            );
+            ) * this.coverFactor(u));
             u.hp -= dmg;
             this.tallyDamage(p.faction, dmg);
             this.pushDamageNumber(u, dmg, 12, 0.8);
@@ -1545,7 +1516,7 @@ export class GameEngine {
       if (p.targetUnitId) {
         const u = this.units.find(o => o.id === p.targetUnitId && o.hp > 0);
         if (u) {
-          const dmg = calculateDamage(p.type, 'infantry', UNIT_CONFIGS[u.type].category, p.damage, u.armor);
+          const dmg = Math.round(calculateDamage(p.type, 'infantry', UNIT_CONFIGS[u.type].category, p.damage, u.armor) * this.coverFactor(u));
           u.hp -= dmg;
             this.tallyDamage(p.faction, dmg);
           this.pushDamageNumber(u, dmg, 10, 0.7);
@@ -1770,6 +1741,19 @@ export class GameEngine {
     if (stale >= 0) this.floatingTexts.splice(stale, 1); // one label per unit: a new burst replaces the fading one
     this.floatingTexts.push({ id: key, x: u.x, y: u.y - lift, text: `-${Math.round(dmg)}`, color: '#ef4444', life: 0, maxLife: life, value: dmg });
     if (this.floatingTexts.length > 60) this.floatingTexts.splice(0, this.floatingTexts.length - 60);
+  }
+
+  /**
+   * Terrain cover (V14), applied in the authoritative damage resolution: infantry in forest takes 20% less damage,
+   * infantry in rubble / rough ground on urban maps 15% less. Vehicles and aircraft get no cover.
+   */
+  public coverFactor(u: Unit): number {
+    if (UNIT_CONFIGS[u.type].category !== 'infantry' || !this.mapData.environment) return 1;
+    const ts = this.mapData.tileSize;
+    const t = this.mapData.tiles[Math.floor(u.y / ts)]?.[Math.floor(u.x / ts)];
+    if (t === 5) return 0.8;
+    if (t === 1 && this.mapData.environment === 'urban') return 0.85;
+    return 1;
   }
 
   private tallyDamage(faction: Faction, dmg: number) {
@@ -4351,6 +4335,9 @@ export class GameEngine {
       mode: this.mode,
       difficulty: this.difficulty,
       mapId: this.mapData.id,
+      map: { id: this.mapData.id, options: { ...mapOptionsFrom(this.matchConfig), seed: this.mapData.seed, size: this.matchConfig?.mapSize } },
+      matchConfig: this.matchConfig,
+      currentMission: this.currentMission,
       missionId: this.currentMission?.id,
       gameTime: this.gameTime,
       gameSpeed: this.gameSpeed,
@@ -4419,6 +4406,17 @@ export class GameEngine {
     try {
       const state = JSON.parse(data.stateJson);
       this.mode = state.mode;
+      // V14: rebuild the saved battlefield (map identity: id + seed + generation options) before restoring entities
+      if (state.mapId) {
+        if (state.matchConfig) this.matchConfig = state.matchConfig;
+        if (state.matchConfig?.victoryCondition) this.victoryCondition = state.matchConfig.victoryCondition;
+        const opts: MapOptions = state.map?.options ?? mapOptionsFrom(state.matchConfig);
+        this.mapData = buildMap(state.map?.id ?? state.mapId, opts);
+        this.pathGrid = new PathfindingGrid(this.mapData);
+        this.fogGrid = new Uint8Array(this.mapData.width * this.mapData.height);
+        this.ai = new EnemyAI(state.difficulty ?? this.difficulty, this.mapData);
+      }
+      if (state.currentMission) this.currentMission = state.currentMission;
       this.difficulty = state.difficulty;
       this.gameTime = state.gameTime;
       this.economy = state.economy;
@@ -4513,4 +4511,12 @@ export class GameEngine {
       return false;
     }
   }
+}
+
+/** Map generation options from a match setup (V14). */
+export function mapOptionsFrom(c?: Partial<MatchSetupConfig>): MapOptions {
+  return {
+    size: c?.mapSize, seed: c?.seed, resourceDensity: c?.resourceDensity, forestDensity: c?.forestDensity,
+    obstacleDensity: c?.obstacleDensity, roads: c?.roads, layout: c?.layout,
+  };
 }

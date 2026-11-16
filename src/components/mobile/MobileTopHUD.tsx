@@ -65,6 +65,10 @@ interface MobileTopHUDProps {
   onStartBuildingPlacement?: (type: BuildingType) => void;
   onExitToMenu?: () => void;
   onRefresh?: () => void;
+  /** V14: the menu button opens the pause menu (central navigation) */
+  onOpenMenu?: () => void;
+  /** V14: incremented to open the developer tools drawer from the pause menu */
+  devToolsSignal?: number;
 }
 
 
@@ -126,8 +130,11 @@ export const MobileTopHUD: React.FC<MobileTopHUDProps> = ({
   onStartBuildingPlacement,
   onExitToMenu,
   onRefresh,
+  onOpenMenu,
+  devToolsSignal = 0,
 }) => {
   const [activeModal, setActiveModal] = useState<DetailModalType>(null);
+  React.useEffect(() => { if (devToolsSignal > 0) setActiveModal('sandbox'); }, [devToolsSignal]);
 
   const econ = engine.economy;
   const isPowerDeficit = econ.powerDemand > econ.powerSupply;
@@ -206,7 +213,7 @@ export const MobileTopHUD: React.FC<MobileTopHUDProps> = ({
             sub={`${enemyUnits.length} hostile`}
           />
           <button
-            onClick={() => setActiveModal(activeModal === 'menu' ? null : 'menu')}
+            onClick={() => (onOpenMenu ? onOpenMenu() : setActiveModal(activeModal === 'menu' ? null : 'menu'))}
             className="w-9 shrink-0 rounded-lg bg-[#16222F] hover:bg-[#1E2E40] border border-[#253446] flex items-center justify-center active:scale-95 transition-all"
             title="Menu and settings"
             aria-label="Menu"

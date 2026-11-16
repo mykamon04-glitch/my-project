@@ -27,6 +27,8 @@ import {
 } from '../types/game';
 import { GROUND_CHUNK_TILES, buildGroundChunk } from './groundTexture';
 import { UnitArtRenderer } from './units/unitRenderer';
+import { TerrainLayer } from './maps/terrainLayer';
+import { drawDeposit, drawIndustrial, drawRuin as drawRuinBlock, drawTree, isTallProp, propDepthY } from './maps/propArt';
 
 export interface Camera {
   x: number;
@@ -42,6 +44,8 @@ export class TacticalRenderer {
   private shadowLvl: ShadowLevel = 'medium';
   private pStride = 1;
   private art = new UnitArtRenderer();
+  private terrain = new TerrainLayer();
+  private warmFrames = 0;
   /** Soft radial sprites (V12): one small canvas per colour, reused instead of a new gradient per particle / tile. */
   private glows = new Map<string, HTMLCanvasElement>();
   private glow(color: string, mid = 0.6): HTMLCanvasElement {
@@ -167,10 +171,25 @@ export class TacticalRenderer {
     this.renderUnitMarkers(groundUnits, settings);
     const tops = new Map<string, number>();
     let gi = 0;
+    // V14: trees, ruins and industrial blocks stand above the ground, so they are sorted with units and buildings
+    const env = mapData.environment ?? mapData.biome;
+    const tall = mapData.environment
+      ? mapData.props.filter(p => isTallProp(p) && p.x > this.viewMinX - 120 && p.x < this.viewMaxX + 40 && p.y > this.viewMinY - 40 && p.y < this.viewMaxY + 120)
+          .sort((a, b) => propDepthY(a) - propDepthY(b))
+      : [];
+    let ti = 0;
+    const drawProp = (p: (typeof tall)[number]) => {
+      if (p.type === 'tree') drawTree(ctx, p, env, currentTime);
+      else if (p.type === 'ruin') drawRuinBlock(ctx, p);
+      else drawIndustrial(ctx, p);
+    };
     const drawUnitsUntil = (yLimit: number) => {
-      while (gi < groundUnits.length && groundUnits[gi].y < yLimit) {
-        const u = groundUnits[gi++];
-        tops.set(u.id, this.art.drawGround(ctx, u));
+      for (;;) {
+        const u = gi < groundUnits.length && groundUnits[gi].y < yLimit ? groundUnits[gi] : null;
+        const p = ti < tall.length && propDepthY(tall[ti]) < yLimit ? tall[ti] : null;
+        if (!u && !p) break;
+        if (p && (!u || propDepthY(p) <= u.y)) { drawProp(p); ti++; }
+        else { tops.set(u!.id, this.art.drawGround(ctx, u!)); gi++; }
       }
     };
     this.renderBuildings(buildings, units, settings, drawUnitsUntil);
@@ -275,6 +294,14 @@ export class TacticalRenderer {
     // Viewport bounds culling across entire visible camera view
     const halfW = screenW / 2 / camera.zoom;
     const halfH = screenH / 2 / camera.zoom;
+
+    // V14 battlefields: material compositor with relief, water depth, organic borders (cached overview + detail chunks)
+    if (mapData.environment) {
+      const view = { x0: camera.x - halfW - 8, y0: camera.y - halfH - 8, x1: camera.x + halfW + 8, y1: camera.y + halfH + 8 };
+      this.warmFrames++;
+      this.terrain.draw(ctx, mapData, view, settings?.graphicsQuality ?? 'ultra', this.warmFrames < 30 ? 14 : 5);
+      return;
+    }
     const minX = Math.floor((camera.x - halfW) / ts) - 1;
     const maxX = Math.ceil((camera.x + halfW) / ts) + 1;
     const minY = Math.floor((camera.y - halfH) / ts) - 1;
@@ -778,7 +805,9 @@ export class TacticalRenderer {
     const ctx = this.ctx;
     const biome = mapData.biome || 'temperate';
 
+    const v14 = !!mapData.environment;
     mapData.props.forEach(p => {
+      if (v14 && isTallProp(p)) return; // drawn with units and buildings, back to front
       if (p.x < this.viewMinX || p.x > this.viewMaxX || p.y < this.viewMinY || p.y > this.viewMaxY) return;
       ctx.save();
       ctx.translate(p.x, p.y);
@@ -866,6 +895,7 @@ export class TacticalRenderer {
         }
 
         case 'wreck': {
+          if (v14) { ctx.restore(); this.art.drawPropWreck(ctx, p.x, p.y, p.rotation, p.variant ?? 0); return; }
           ctx.rotate(p.rotation);
           ctx.fillStyle = '#1c1917';
           ctx.fillRect(-12, -7, 24, 14);
@@ -1011,6 +1041,15 @@ export class TacticalRenderer {
     const ctx = this.ctx;
     const ts = mapData.tileSize;
 
+    if (mapData.environment) {
+      // V14: natural mineral outcrops, no text labels (the radar and deposit glint identify them)
+      for (const node of mapData.resourceNodes) {
+        const px = node.x * ts + ts / 2, py = node.y * ts + ts / 2;
+        if (px < this.viewMinX || px > this.viewMaxX || py < this.viewMinY || py > this.viewMaxY) continue;
+        drawDeposit(ctx, px, py, node.x * 31 + node.y * 17, this.animFrameTime);
+      }
+      return;
+    }
     mapData.resourceNodes.forEach(node => {
       const px = node.x * ts + ts / 2;
       const py = node.y * ts + ts / 2;

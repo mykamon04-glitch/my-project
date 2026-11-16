@@ -735,3 +735,13 @@ export function populateNaturalVegetation(
 
   return props;
 }
+
+// V14: every legacy preset id now builds the seeded, validated V14 battlefield it maps to (the hand-made generators
+// above are kept for reference but no longer used: they were not reproducible and placed deposits off small maps).
+import { buildMap, mapEntry } from './maps/catalog';
+for (const key of Object.keys(MAP_PRESETS)) {
+  const e = mapEntry(key);
+  MAP_PRESETS[key].generator = (s?: MapSize) => buildMap(key, { size: s });
+  MAP_PRESETS[key].name = e.name;
+  MAP_PRESETS[key].description = e.description;
+}
