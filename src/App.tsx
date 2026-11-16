@@ -19,7 +19,7 @@ import { MobileFloatingRadar } from './components/mobile/MobileFloatingRadar';
 import { BUILDING_CONFIGS, UNIT_CONFIGS } from './data/gameData';
 import { recordMatchProgress } from './data/careerStats';
 import { GameEngine } from './game/engine';
-import { frameIntervalMs, getRenderScale } from './game/renderQuality';
+import { AutoQuality, frameIntervalMs, getRenderScale, presetValues } from './game/renderQuality';
 import { Camera, TacticalRenderer } from './game/renderer';
 import { TacticalThreeRenderer } from './game/threeRenderer';
 import {
@@ -424,6 +424,7 @@ export default function App() {
     let animId: number;
     let lastTime = performance.now();
 
+    let autoQ: AutoQuality | null = null;
     const loop = (time: number) => {
       // Frame-rate target (Settings): skip this frame if it is too soon; elapsed time accumulates into the next dt.
       const minFrameMs = frameIntervalMs(engineRef.current?.settings);
@@ -431,8 +432,18 @@ export default function App() {
         animId = requestAnimationFrame(loop);
         return;
       }
+      const rawFrameMs = time - lastTime;
       const dt = Math.min((time - lastTime) / 1000, 0.1);
       lastTime = time;
+
+      // V12 Auto graphics preset: adapt to the measured frame rate (thresholds follow the frame-rate cap)
+      const st = engineRef.current?.settings;
+      if (st?.autoQuality) {
+        const cap = st.frameRateTarget || 60;
+        if (!autoQ || autoQ.cap !== cap) autoQ = new AutoQuality(st.graphicsQuality, cap * 0.63, cap * 0.93, cap);
+        const lv = autoQ.sample(rawFrameMs);
+        if (lv) { st.graphicsQuality = lv; Object.assign(st, presetValues(lv)); }
+      } else autoQ = null;
 
       const engine = engineRef.current;
       const canvas = canvasRef.current;
@@ -1492,23 +1503,13 @@ export default function App() {
         return;
       }
 
-      if (selectedUnitIds.length > 0) {
-        if (e.code === 'KeyA') {
-          selectedUnitIds.forEach(id => {
-            const u = engine.units.find(o => o.id === id);
-            if (u) u.command = 'attack_move';
-          });
-        } else if (e.code === 'KeyS') {
-          selectedUnitIds.forEach(id => {
-            const u = engine.units.find(o => o.id === id);
-            if (u) {
-              u.command = 'idle';
-              u.path = [];
-              u.targetUnitId = undefined;
-              u.targetBuildingId = undefined;
-            }
-          });
-        }
+      // V12 desktop shortcuts, routed through the same engine commands / target modes as the touch UI:
+      // M move · A attack · D defend · P patrol (then click the target) · S stop · G hold position
+      if (selectedUnitIds.length > 0 && !e.ctrlKey && !e.metaKey) {
+        const mode = ({ KeyM: 'MOVE_TARGET', KeyA: 'ATTACK_TARGET', KeyD: 'DEFEND_TARGET', KeyP: 'PATROL_TARGET' } as const)[e.code as 'KeyM'];
+        if (mode) { setActiveInteractionMode(m => (m === mode ? 'NORMAL' : mode)); soundEngine.playClick(); return; }
+        if (e.code === 'KeyS') { engine.issueStop(selectedUnitIds); return; }
+        if (e.code === 'KeyG') { engine.issueHold(selectedUnitIds); return; }
       }
 
       const numMatch = e.code.match(/^Digit([1-5])$/);

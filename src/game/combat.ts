@@ -134,57 +134,57 @@ export function createCasualtyParticles(x: number, y: number): Particle[] {
   return particles;
 }
 
+/**
+ * Explosion (V12): a short fireball, a thin expanding pressure ring, hot debris and lingering smoke.
+ * Sized to the weapon, never screen-filling; the renderer draws fire additively and fades everything out.
+ */
 export function createExplosionParticles(x: number, y: number, isLarge: boolean = false): Particle[] {
   const particles: Particle[] = [];
-  const count = isLarge ? 32 : 18;
+  const k = isLarge ? 1.5 : 1;
 
-  // Expanding shockwave ring
-  particles.push({
-    x,
-    y,
-    vx: 0,
-    vy: 0,
-    life: 0,
-    maxLife: 0.35,
-    color: '#ffffff',
-    size: isLarge ? 48 : 26,
-    alpha: 0.9,
-    type: 'shockwave',
-  });
+  // Thin pressure ring: grows from the centre while it fades (see renderer)
+  particles.push({ x, y, vx: 0, vy: 0, life: 0, maxLife: 0.32, color: '#f4e4c8', size: 20 * k, alpha: 0.55, type: 'shockwave' });
 
-  // Hot Fire debris
+  // Fireball core
+  particles.push({ x, y: y - 2, vx: 0, vy: -6, life: 0, maxLife: 0.28 * k, color: '#ffd28a', size: 9 * k, alpha: 1, type: 'fire' });
+
+  // Hot debris and flame tongues
+  const count = isLarge ? 14 : 8;
   for (let i = 0; i < count; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = (Math.random() * 90 + 35) * (isLarge ? 1.7 : 1.0);
+    const speed = (Math.random() * 55 + 25) * k;
     particles.push({
-      x,
-      y,
+      x, y,
       vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed,
+      vy: Math.sin(angle) * speed * 0.7 - 10,
       life: 0,
-      maxLife: Math.random() * 0.45 + 0.3,
-      color: Math.random() > 0.4 ? '#f97316' : '#ef4444',
-      size: Math.random() * 5 + 3,
+      maxLife: Math.random() * 0.3 + 0.2,
+      color: Math.random() > 0.5 ? '#ffb15c' : '#e8743a',
+      size: Math.random() * 2.2 + 1.6,
       alpha: 1.0,
       type: 'fire',
     });
   }
+  for (let i = 0; i < (isLarge ? 5 : 2); i++) {
+    const angle = Math.random() * Math.PI * 2, speed = Math.random() * 70 + 40;
+    particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 20, life: 0, maxLife: 0.45, color: '#3a342c', size: 1.4, alpha: 0.9, type: 'debris' });
+  }
 
-  // Brief light smoke puffs (clean, non-obscuring)
-  const smokeCount = isLarge ? 4 : 2;
+  // Smoke that rises and spreads, then thins out
+  const smokeCount = isLarge ? 5 : 3;
   for (let i = 0; i < smokeCount; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = Math.random() * 20 + 8;
+    const speed = Math.random() * 12 + 4;
     particles.push({
-      x,
+      x: x + (Math.random() - 0.5) * 6,
       y,
       vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 8,
+      vy: Math.sin(angle) * speed * 0.5 - 12,
       life: 0,
-      maxLife: Math.random() * 0.3 + 0.25,
-      color: '#475569',
-      size: Math.random() * 3 + 3,
-      alpha: 0.4,
+      maxLife: Math.random() * 0.8 + 0.9,
+      color: '#5b564e',
+      size: (Math.random() * 3 + 4) * k,
+      alpha: 0.38,
       type: 'smoke',
     });
   }

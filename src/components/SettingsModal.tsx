@@ -325,11 +325,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       key={preset}
                       onClick={() => {
                         currentSettings.graphicsQuality = preset;
+                        currentSettings.autoQuality = false;
                         Object.assign(currentSettings, presetValues(preset));
                         notifyChange(`Graphics preset: ${PRESET_LABELS[preset]}`);
                       }}
                       className={`py-2 rounded-lg text-center font-bold text-[10px] transition-all ${
-                        currentSettings.graphicsQuality === preset
+                        currentSettings.graphicsQuality === preset && !currentSettings.autoQuality
                           ? 'bg-[#38B98A] text-[#101820] shadow-md'
                           : 'bg-[#1C2933] text-[#A9B8C5] hover:text-[#F4F7FA]'
                       }`}
@@ -339,15 +340,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   ))}
                   <button
                     onClick={() => {
-                      // Auto mode: evaluate device performance
-                      const isMobile = window.innerWidth < 768;
-                      const dpr = window.devicePixelRatio || 1;
-                      const quality = isMobile && dpr > 2 ? 'medium' : 'high';
-                      currentSettings.graphicsQuality = quality;
-                      Object.assign(currentSettings, presetValues(quality));
-                      notifyChange(`AUTO: Device profile calibrated (${PRESET_LABELS[quality]})`);
+                      // V12 Auto: start at High, then the game lowers / raises the preset from the measured frame rate
+                      currentSettings.autoQuality = true;
+                      currentSettings.graphicsQuality = 'high';
+                      Object.assign(currentSettings, presetValues('high'));
+                      notifyChange('AUTO: preset adapts to the measured frame rate');
                     }}
-                    className="py-2 rounded-lg text-center uppercase font-bold text-[11px] bg-[#173A32] text-[#38B98A] border border-[#38B98A]/40 hover:bg-[#38B98A]/20"
+                    className={`py-2 rounded-lg text-center uppercase font-bold text-[11px] border ${
+                      currentSettings.autoQuality ? 'bg-[#38B98A] text-[#101820] border-[#38B98A]' : 'bg-[#173A32] text-[#38B98A] border-[#38B98A]/40 hover:bg-[#38B98A]/20'
+                    }`}
+                    title="Adapts the preset to the measured frame rate"
                   >
                     AUTO
                   </button>

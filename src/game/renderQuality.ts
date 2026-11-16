@@ -61,3 +61,33 @@ export function presetValues(p: 'low' | 'medium' | 'high' | 'ultra'): Required<P
       return { resolutionScale: 1, shadowQuality: 'high', particleDensity: 'high', smokeDensity: 'normal' };
   }
 }
+
+export type QualityLevel = 'low' | 'medium' | 'high' | 'ultra';
+const LADDER: QualityLevel[] = ['low', 'medium', 'high', 'ultra'];
+
+/**
+ * Adaptive "Auto" preset (V12). Fed the real frame intervals, it lowers the preset when the measured frame rate stays
+ * under `low` fps for a 2.5 s window and raises it again (never above High) after 10 s of comfortable frame rate.
+ * Pure: it only returns the level to switch to; the caller applies it with presetValues().
+ */
+export class AutoQuality {
+  private acc = 0;
+  private frames = 0;
+  private goodFor = 0;
+  constructor(public level: QualityLevel = 'high', private lowFps = 38, private highFps = 56, public cap = 60) {}
+  sample(dtMs: number): QualityLevel | null {
+    if (!(dtMs > 0) || dtMs > 1000) return null; // tab switches and stalls are not performance
+    this.acc += dtMs; this.frames++;
+    if (this.acc < 2500) return null;
+    const fps = (this.frames * 1000) / this.acc;
+    const windowMs = this.acc;
+    this.acc = 0; this.frames = 0;
+    const i = LADDER.indexOf(this.level);
+    if (fps < this.lowFps && i > 0) { this.goodFor = 0; return (this.level = LADDER[i - 1]); }
+    if (fps >= this.highFps) {
+      this.goodFor += windowMs;
+      if (this.goodFor >= 10000 && i < 2) { this.goodFor = 0; return (this.level = LADDER[i + 1]); }
+    } else this.goodFor = 0;
+    return null;
+  }
+}

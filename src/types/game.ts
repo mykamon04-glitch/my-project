@@ -385,6 +385,7 @@ export interface GameSettings {
   unitVisibility: 'standard' | 'enhanced';
   dayNightCycle: boolean;
   graphicsQuality: 'low' | 'medium' | 'high' | 'ultra';
+  autoQuality?: boolean; // V12: adapt the preset to the measured frame rate
   screenShake: number; // 0 to 1
   showDamageNumbers: boolean;
   // Controls

@@ -21,6 +21,8 @@ export interface AIState {
 export class EnemyAI {
   private difficulty: AIDifficulty;
   private state: AIState;
+  /** HP of our structures at the last decision, to notice attacks from outside the HQ threat radius (V12). */
+  private lastHp = new Map<string, number>();
   private mapData: MapData;
 
   constructor(difficulty: AIDifficulty, mapData: MapData) {
@@ -304,16 +306,32 @@ export class EnemyAI {
     const aliveUnits = enemyUnits.filter(u => u.hp > 0);
     if (aliveUnits.length === 0) return;
 
-    // Check if enemy base or HQ is under siege
+    // Base defence (V12). Two triggers, both from real game state:
+    //   - hostile units close to the HQ (the original rule), and
+    //   - any of our structures losing HP since the last decision (catches long-range shelling of the HQ and raids on
+    //     refineries / power), with the attackers identified by what they are targeting.
     const hq = enemyBuildings.find(b => b.type === 'headquarters');
-    const threatsNearHQ = hq
-      ? playerUnits.filter(u => Math.hypot(u.x - hq.pixelX, u.y - hq.pixelY) < (this.difficulty === 'expert' ? 550 : 450))
-      : [];
+    const radius = this.difficulty === 'expert' ? 550 : 450;
+    const threatsNearHQ = hq ? playerUnits.filter(u => u.hp > 0 && Math.hypot(u.x - hq.pixelX, u.y - hq.pixelY) < radius) : [];
+    const damaged = enemyBuildings.filter(b => b.hp > 0 && b.hp < (this.lastHp.get(b.id) ?? b.hp) - 0.5);
+    this.lastHp.clear();
+    for (const b of enemyBuildings) this.lastHp.set(b.id, b.hp);
+    const ids = new Set(damaged.map(b => b.id));
+    const attackers = playerUnits.filter(u => u.hp > 0 && u.targetBuildingId && ids.has(u.targetBuildingId));
+    const threats = threatsNearHQ.length > 0 ? threatsNearHQ : attackers;
+    const critical = threatsNearHQ.length > 0 || damaged.some(b => b.type === 'headquarters');
 
-    if (threatsNearHQ.length > 0 && hq) {
-      // BASE UNDER ATTACK! Dynamic defensive recall
-      const allUnitIds = aliveUnits.map(u => u.id);
-      onIssueUnitCommand(allUnitIds, { x: hq.pixelX, y: hq.pixelY }, true);
+    if (threats.length > 0 && (critical || damaged.length > 0)) {
+      // Counter-attack the nearest attacker. The HQ commits the whole army; an outlying structure gets the closest half
+      // while the rest keeps its orders.
+      const focus = hq ?? damaged[0];
+      const fx = focus ? focus.pixelX : threats[0].x, fy = focus ? focus.pixelY : threats[0].y;
+      const target = threats.reduce((a, b) => (Math.hypot(a.x - fx, a.y - fy) <= Math.hypot(b.x - fx, b.y - fy) ? a : b));
+      const pool = critical
+        ? aliveUnits
+        : [...aliveUnits].sort((a, b) => Math.hypot(a.x - target.x, a.y - target.y) - Math.hypot(b.x - target.x, b.y - target.y)).slice(0, Math.max(2, Math.ceil(aliveUnits.length / 2)));
+      onIssueUnitCommand(pool.map(u => u.id), { x: target.x, y: target.y }, true);
+      this.state.isAssaulting = false;
       return;
     }
 

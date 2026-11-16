@@ -75,7 +75,7 @@ export class UnitArtRenderer {
     if (kind === 'infantry') {
       d.body = this.fetch({ type: u.type, faction: f, layer: 'body', dir: a.dir, dirs: a.dirs, clip: a.clip, frame: a.frame, flat: this.flat }, d.body);
       if (d.body) { this.blit(ctx, d.body, u.x, u.y); top = u.y + d.body.oy; }
-      if ((u.muzzleFlash ?? 0) > 0 && d.body?.marks.muzzle) this.flash(ctx, u.x + d.body.marks.muzzle[0], u.y + d.body.marks.muzzle[1], u.muzzleFlash!, 0.6);
+      if ((u.muzzleFlash ?? 0) > 0 && d.body?.marks.muzzle) this.flash(ctx, u.x + d.body.marks.muzzle[0], u.y + d.body.marks.muzzle[1], u.muzzleFlash!, 0.6, u.rotation);
     } else {
       const def = vehicleDef(u.type);
       d.body = this.fetch({ type: u.type, faction: f, layer: 'body', dir: a.dir, dirs: a.dirs, tread: def.tracked ? a.tread : 0, flat: this.flat }, d.body);
@@ -92,7 +92,7 @@ export class UnitArtRenderer {
           muzzle = d.turret.marks.muzzle; mx = u.x + hp[0]; my = u.y + hp[1];
         }
       }
-      if ((u.muzzleFlash ?? 0) > 0 && muzzle) this.flash(ctx, mx + muzzle[0], my + muzzle[1], u.muzzleFlash!, 1.3);
+      if ((u.muzzleFlash ?? 0) > 0 && muzzle) this.flash(ctx, mx + muzzle[0], my + muzzle[1], u.muzzleFlash!, 1.3, u.turretRotation ?? u.rotation);
     }
     this.drawn.set(u.id, d);
     return top;
@@ -126,7 +126,7 @@ export class UnitArtRenderer {
         const m = d.body.marks[r.mark];
         if (m) this.rotor(ctx, u.x + m[0], y + m[1], r.r, r.blades, this.time * r.rate + a.seed * 9, r.plane, heading);
       }
-      if ((u.muzzleFlash ?? 0) > 0 && d.body.marks.muzzle) this.flash(ctx, u.x + d.body.marks.muzzle[0], y + d.body.marks.muzzle[1], u.muzzleFlash!, 1);
+      if ((u.muzzleFlash ?? 0) > 0 && d.body.marks.muzzle) this.flash(ctx, u.x + d.body.marks.muzzle[0], y + d.body.marks.muzzle[1], u.muzzleFlash!, 1, u.rotation);
     }
     this.drawn.set(u.id, d);
     return top;
@@ -161,17 +161,44 @@ export class UnitArtRenderer {
     ctx.restore();
   }
 
-  private flash(ctx: CanvasRenderingContext2D, x: number, y: number, t: number, size: number) {
+  /** Muzzle flash: a short directional cone along the barrel plus a small core glow (V12: directional, restrained). */
+  private flash(ctx: CanvasRenderingContext2D, x: number, y: number, t: number, size: number, angle: number) {
     const k = Math.min(1, t / 0.08);
-    const r = (2 + 4 * k) * size;
+    const len = (4 + 6 * k) * size, wid = (1.4 + 1.6 * k) * size;
+    const ca = Math.cos(angle), sa = Math.sin(angle);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
+    // cone
+    ctx.fillStyle = `rgba(255,196,110,${0.75 * k})`;
+    ctx.beginPath();
+    ctx.moveTo(x - sa * wid, y + ca * wid);
+    ctx.lineTo(x + ca * len, y + sa * len);
+    ctx.lineTo(x + sa * wid, y - ca * wid);
+    ctx.closePath();
+    ctx.fill();
+    // core
+    const r = (1.6 + 2.2 * k) * size;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, `rgba(255,244,214,${0.95 * k})`);
-    g.addColorStop(0.35, `rgba(255,190,96,${0.7 * k})`);
-    g.addColorStop(1, 'rgba(255,140,40,0)');
+    g.addColorStop(0, `rgba(255,246,220,${0.95 * k})`);
+    g.addColorStop(1, 'rgba(255,150,50,0)');
     ctx.fillStyle = g;
     ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    ctx.restore();
+  }
+
+  /** Target marker (V12): red corner brackets around what the selected units are attacking. */
+  drawTargetMarker(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, time: number) {
+    const p = 1 + Math.sin(time * 6) * 0.06;
+    const h = r * p, c = Math.max(3, r * 0.35);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(232, 92, 84, 0.9)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const cx = x + sx * h, cy = y + sy * h * 0.75;
+      ctx.moveTo(cx - sx * c, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy - sy * c);
+    }
+    ctx.stroke();
     ctx.restore();
   }
 

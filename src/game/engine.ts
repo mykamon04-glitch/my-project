@@ -1766,6 +1766,8 @@ export class GameEngine {
       prev.life = 0;
       return;
     }
+    const stale = this.floatingTexts.findIndex(t => t.id === key);
+    if (stale >= 0) this.floatingTexts.splice(stale, 1); // one label per unit: a new burst replaces the fading one
     this.floatingTexts.push({ id: key, x: u.x, y: u.y - lift, text: `-${Math.round(dmg)}`, color: '#ef4444', life: 0, maxLife: life, value: dmg });
     if (this.floatingTexts.length > 60) this.floatingTexts.splice(0, this.floatingTexts.length - 60);
   }

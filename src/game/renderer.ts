@@ -160,6 +160,25 @@ export class TacticalRenderer {
     for (const u of visible) if (u.selected) nSel++;
     const detail = nSel <= 3;
     this.art.beginOverlays();
+    // What the selected player units are attacking (one marker per target)
+    const marked = new Set<string>();
+    for (const u of visible) {
+      if (!u.selected || u.faction !== 'player') continue;
+      const id = u.targetUnitId ?? u.targetBuildingId;
+      if (!id || marked.has(id)) continue;
+      marked.add(id);
+      if (u.targetUnitId) {
+        const t = units.find(o => o.id === id && o.hp > 0);
+        if (t) {
+          const air = UNIT_CONFIGS[t.type].isAir;
+          const inf = UNIT_CONFIGS[t.type].category === 'infantry';
+          this.art.drawTargetMarker(ctx, t.x, t.y - (air ? t.altitude || 55 : inf ? 6 : 4), inf ? 9 : 17, currentTime);
+        }
+      } else {
+        const b = buildings.find(o => o.id === id && o.hp > 0);
+        if (b) this.art.drawTargetMarker(ctx, b.pixelX, b.pixelY - 10, b.width * 20 + 6, currentTime);
+      }
+    }
     for (const u of groundUnits) this.art.drawOverlay(ctx, u, tops.get(u.id) ?? u.y - 12, controlGroups, detail);
     for (const u of airUnits) this.art.drawOverlay(ctx, u, tops.get(u.id) ?? u.y - (u.altitude || 55) - 12, controlGroups, detail);
     this.art.endFrame();
@@ -403,27 +422,30 @@ export class TacticalRenderer {
             ctx.fillRect(px, py, ts + 0.6, ts + 0.6);
           }
 
-          // Occasional organic soil depressions (natural variation, non-repetitive)
+          // Occasional bare-earth patch (V12: soft-edged and low-contrast, instead of hard dark ovals that read as holes)
           if (noise > 0.945) {
             const depX = px + offsetX2;
             const depY = py + offsetY2;
-            const depR = 5 + noise * 4;
-            ctx.fillStyle = 'rgba(15, 25, 18, 0.28)';
-            ctx.beginPath();
-            ctx.ellipse(depX + 1, depY + 1.2, depR + 1, (depR + 1) * (0.45 + noise * 0.3), noise * 3, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = eyeComfort ? '#221c17' : 'rgba(34, 30, 20, 0.7)';
-            ctx.beginPath();
-            ctx.ellipse(depX, depY, depR, depR * (0.45 + noise * 0.3), noise * 3, 0, Math.PI * 2);
-            ctx.fill();
+            const depR = 9 + noise * 7;
+            const g = ctx.createRadialGradient(depX, depY, 0, depX, depY, depR);
+            g.addColorStop(0, eyeComfort ? 'rgba(70,60,44,0.22)' : 'rgba(92,78,56,0.26)');
+            g.addColorStop(0.6, 'rgba(84,72,52,0.12)');
+            g.addColorStop(1, 'rgba(84,72,52,0)');
+            ctx.fillStyle = g;
+            ctx.save();
+            ctx.translate(depX, depY); ctx.scale(1, 0.6 + noise * 0.25); ctx.translate(-depX, -depY);
+            ctx.fillRect(depX - depR, depY - depR, depR * 2, depR * 2);
+            ctx.restore();
           }
 
-          // Subtle organic moss patch (sparse, low-contrast, no high-frequency repeating blades)
+          // Subtle organic moss patch (sparse, low-contrast, soft-edged)
           if (!eyeComfort && noise > 0.88) {
-            ctx.fillStyle = 'rgba(38, 78, 52, 0.4)';
-            ctx.beginPath();
-            ctx.ellipse(px + offsetX1, py + offsetY1, 4.5, 3, 0, 0, Math.PI * 2);
-            ctx.fill();
+            const mx = px + offsetX1, my = py + offsetY1;
+            const g = ctx.createRadialGradient(mx, my, 0, mx, my, 7);
+            g.addColorStop(0, 'rgba(52, 84, 50, 0.28)');
+            g.addColorStop(1, 'rgba(52, 84, 50, 0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(mx - 7, my - 7, 14, 14);
           }
         }
 
@@ -778,18 +800,30 @@ export class TacticalRenderer {
         }
 
         case 'rock': {
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-          ctx.beginPath();
-          ctx.ellipse(2, 4, p.size * 0.9, p.size * 0.5, 0, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.fillStyle = '#334155';
-          ctx.beginPath();
-          ctx.roundRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.8, 3);
-          ctx.fill();
-
-          ctx.fillStyle = '#64748b';
-          ctx.fillRect(-p.size / 2 + 2, -p.size / 2 + 2, p.size * 0.5, p.size * 0.3);
+          // V12: natural boulder — irregular outline, lit top, shaded south face, soft contact shadow
+          const r = p.size * 0.55;
+          const seed = Math.abs(Math.sin(p.x * 12.9898 + p.y * 78.233));
+          const pts: [number, number][] = [];
+          for (let k = 0; k < 7; k++) {
+            const a = (k / 7) * Math.PI * 2 + seed;
+            const rr = r * (0.78 + 0.28 * Math.abs(Math.sin(seed * 31 + k * 2.3)));
+            pts.push([Math.cos(a) * rr, Math.sin(a) * rr * 0.62]);
+          }
+          const tone = biome === 'desert' ? [150, 126, 96] : biome === 'snow' ? [150, 156, 160] : [112, 108, 98];
+          if (this.shadowLvl !== 'off') {
+            ctx.fillStyle = 'rgba(10, 12, 8, 0.28)';
+            ctx.beginPath(); ctx.ellipse(r * 0.25, r * 0.35, r * 1.05, r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+          }
+          // body (shaded side) then lifted, lit top surface
+          ctx.fillStyle = `rgb(${tone[0] * 0.62 | 0},${tone[1] * 0.62 | 0},${tone[2] * 0.62 | 0})`;
+          ctx.beginPath(); pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y + r * 0.18) : ctx.moveTo(x, y + r * 0.18))); ctx.closePath(); ctx.fill();
+          const g = ctx.createLinearGradient(-r, -r, r, r);
+          g.addColorStop(0, `rgb(${tone[0] * 1.08 | 0},${tone[1] * 1.08 | 0},${tone[2] * 1.08 | 0})`);
+          g.addColorStop(1, `rgb(${tone[0] * 0.82 | 0},${tone[1] * 0.82 | 0},${tone[2] * 0.82 | 0})`);
+          ctx.fillStyle = g;
+          ctx.beginPath(); pts.forEach(([x, y], k) => (k ? ctx.lineTo(x * 0.92, y * 0.92 - r * 0.08) : ctx.moveTo(x * 0.92, y * 0.92 - r * 0.08))); ctx.closePath(); ctx.fill();
+          ctx.strokeStyle = 'rgba(30, 28, 24, 0.35)'; ctx.lineWidth = 0.6;
+          ctx.beginPath(); ctx.moveTo(-r * 0.2, -r * 0.3); ctx.lineTo(r * 0.05, r * 0.05); ctx.lineTo(r * 0.3, -r * 0.05); ctx.stroke();
           break;
         }
 
@@ -837,7 +871,7 @@ export class TacticalRenderer {
           const darkTone = biome === 'snow' ? '#1e293b' : biome === 'desert' ? '#5a4224' : '#14381e';
           const midTone = biome === 'snow' ? '#334155' : biome === 'desert' ? '#785633' : '#1f592f';
           const lightTone = biome === 'snow' ? '#64748b' : biome === 'desert' ? '#9c7344' : '#308044';
-          const highlightTone = biome === 'snow' ? '#cbd5e1' : biome === 'desert' ? '#c2975f' : '#4ade80';
+          const highlightTone = biome === 'snow' ? '#cbd5e1' : biome === 'desert' ? '#c2975f' : '#6a9a5a'; // V12: muted
 
           const r = p.size * 0.55;
           const varOffset = ((p.variant || 0) * 0.15);
@@ -884,7 +918,7 @@ export class TacticalRenderer {
           const darkTone = biome === 'snow' ? '#1e293b' : biome === 'desert' ? '#5a4224' : '#14381e';
           const midTone = biome === 'snow' ? '#334155' : biome === 'desert' ? '#785633' : '#1f592f';
           const lightTone = biome === 'snow' ? '#64748b' : biome === 'desert' ? '#9c7344' : '#308044';
-          const highlightTone = biome === 'snow' ? '#cbd5e1' : biome === 'desert' ? '#c2975f' : '#4ade80';
+          const highlightTone = biome === 'snow' ? '#cbd5e1' : biome === 'desert' ? '#c2975f' : '#6a9a5a'; // V12: muted
 
           // Sub-bushes in isometric cluster
           const subBushes = [
@@ -924,7 +958,7 @@ export class TacticalRenderer {
 
         case 'wild_grass': {
           const sway = Math.sin(this.animFrameTime * 2.5 + p.x) * 2;
-          const grassColor = biome === 'snow' ? '#64748b' : biome === 'desert' ? '#9c7344' : '#22c55e';
+          const grassColor = biome === 'snow' ? '#64748b' : biome === 'desert' ? '#9c7344' : '#557f46'; // V12: muted
           const shadowGrass = biome === 'snow' ? '#1e293b' : biome === 'desert' ? '#5a4224' : '#14381e';
 
           ctx.lineWidth = 1.4;
@@ -2467,12 +2501,32 @@ export class TacticalRenderer {
       ctx.globalAlpha = alpha;
       ctx.fillStyle = p.color;
 
+      const age = p.maxLife > 0 ? Math.min(1, p.life / p.maxLife) : 1;
       if (p.type === 'shockwave') {
+        // thin ring that expands as it fades
         ctx.strokeStyle = p.color;
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = 1.2;
+        ctx.globalAlpha = alpha * (1 - age);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+        ctx.ellipse(p.x, p.y, size * (0.25 + age), size * (0.25 + age) * 0.62, 0, 0, Math.PI * 2);
         ctx.stroke();
+      } else if (p.type === 'fire' || p.type === 'spark') {
+        // additive glow that shrinks as it cools
+        const r = size * (p.type === 'fire' ? 1.6 - age * 0.9 : 1);
+        ctx.globalCompositeOperation = 'lighter';
+        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, Math.max(0.5, r));
+        g.addColorStop(0, p.color);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+      } else if (p.type === 'smoke' || p.type === 'dust') {
+        // soft puff that grows while it thins
+        const r = size * (1 + age * 1.4);
+        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+        g.addColorStop(0, p.color);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
       } else {
         ctx.beginPath();
         ctx.arc(p.x, p.y, size, 0, Math.PI * 2);

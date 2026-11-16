@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../src/audio/soundEngine', () => ({ soundEngine: new Proxy({}, { get: () => () => {} }) }));
 
 import { GameEngine } from '../src/game/engine';
+import { getObjectives } from '../src/game/objectives';
 
 const step = (e: GameEngine, sec: number) => { for (let i = 0; i < sec * 20; i++) e.update(0.05); };
 const hq = (e: GameEngine, f: 'player' | 'enemy') => e.buildings.find(b => b.type === 'headquarters' && b.faction === f);
@@ -151,5 +152,18 @@ describe('V12 match state machine', () => {
     e.update(0.05);
     expect(e.matchStats.enemyUnitsKilled).toBe(1);
     expect(e.matchStats.friendlyUnitsLost).toBe(1);
+  });
+
+  it('objectives come from live data: partial progress is never shown as complete', () => {
+    const e = mk();
+    e.update(0.05);
+    const obj = getObjectives(e);
+    const dep = obj.find(o => o.id === 'secure_deposits')!;
+    expect(dep.progress).toBeLessThan(dep.target);
+    expect(dep.completed).toBe(false);
+    expect(obj.find(o => o.id === 'destroy_enemy_hq')!.completed).toBe(false);
+    hq(e, 'enemy')!.hp = 0; e.update(0.05); e.update(0.05);
+    expect(getObjectives(e).find(o => o.id === 'destroy_enemy_hq')!.completed).toBe(true);
+    for (const o of getObjectives(e)) expect(Number.isInteger(o.progress)).toBe(true);
   });
 });
