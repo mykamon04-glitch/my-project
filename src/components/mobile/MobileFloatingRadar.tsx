@@ -16,6 +16,7 @@ import {
   Shield,
   Radio,
 } from 'lucide-react';
+import { UNIT_CONFIGS } from '../../data/gameData';
 import { GameEngine } from '../../game/engine';
 import { Camera } from '../../game/renderer';
 
@@ -50,7 +51,7 @@ export const MobileFloatingRadar: React.FC<MobileFloatingRadarProps> = ({
   const mapH = engine.mapData.height * engine.mapData.tileSize;
 
   // Dynamic Micro Radar: customizable via settings (compact: 88px, standard: 104px, large: 128px)
-  const radarSetting = engine.settings.radarSize || 'standard';
+  const radarSetting = engine.settings.radarSize || 'compact'; // V12: compact by default, expandable
   const miniW = radarSetting === 'compact' ? 88 : radarSetting === 'large' ? 128 : 104;
   const miniH = radarSetting === 'compact' ? 62 : radarSetting === 'large' ? 90 : 72;
 
@@ -124,7 +125,16 @@ export const MobileFloatingRadar: React.FC<MobileFloatingRadarProps> = ({
         const gx = Math.floor(b.pixelX / ts);
         const gy = Math.floor(b.pixelY / ts);
         const fogState = engine.fogGrid[gy * engine.mapData.width + gx];
-        if (b.faction === 'enemy' && engine.settings.fogOfWarEnabled && fogState === 0) return;
+        if (b.faction === 'enemy' && engine.settings.fogOfWarEnabled && fogState === 0) {
+          // V12: the enemy headquarters location is known intel (the objective), so it stays marked under fog
+          if (b.type === 'headquarters') {
+            const hx = b.pixelX * scaleX, hy = b.pixelY * scaleY;
+            ctx.strokeStyle = '#E45B63';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.moveTo(hx, hy - 4); ctx.lineTo(hx + 4, hy); ctx.lineTo(hx, hy + 4); ctx.lineTo(hx - 4, hy); ctx.closePath(); ctx.stroke();
+          }
+          return;
+        }
 
         const bx = b.pixelX * scaleX;
         const by = b.pixelY * scaleY;
@@ -163,7 +173,7 @@ export const MobileFloatingRadar: React.FC<MobileFloatingRadarProps> = ({
         const isPlayer = u.faction === 'player';
         ctx.fillStyle = isPlayer ? '#36C9E8' : '#E45B63';
 
-        if (u.type === 'attack_helicopter' || u.type === 'stealth_fighter' || u.type === 'recon_drone') {
+        if (UNIT_CONFIGS[u.type]?.isAir) {
           // Aircraft: Triangle
           ctx.beginPath();
           ctx.moveTo(ux, uy - 2.5);

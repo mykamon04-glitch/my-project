@@ -155,8 +155,13 @@ export class TacticalRenderer {
     this.renderAircraft(airUnits, settings, tops);
 
     // 8a. Unit overlays (health, veterancy, squad), always upright and above the art
-    for (const u of groundUnits) this.art.drawOverlay(ctx, u, tops.get(u.id) ?? u.y - 12, controlGroups);
-    for (const u of airUnits) this.art.drawOverlay(ctx, u, tops.get(u.id) ?? u.y - (u.altitude || 55) - 12, controlGroups);
+    // Health numbers only when few units are selected; a large selection shows bars for damaged units only.
+    let nSel = 0;
+    for (const u of visible) if (u.selected) nSel++;
+    const detail = nSel <= 3;
+    this.art.beginOverlays();
+    for (const u of groundUnits) this.art.drawOverlay(ctx, u, tops.get(u.id) ?? u.y - 12, controlGroups, detail);
+    for (const u of airUnits) this.art.drawOverlay(ctx, u, tops.get(u.id) ?? u.y - (u.altitude || 55) - 12, controlGroups, detail);
     this.art.endFrame();
 
     // 8b. Render Tactical Detected Threat Tracking Locks (OFF by default)
@@ -2849,9 +2854,16 @@ export class TacticalRenderer {
 
       ctx.save();
       ctx.globalAlpha = alpha;
-      ctx.fillStyle = ft.color;
-      ctx.font = 'bold 12px "JetBrains Mono", monospace';
+      // V12: combat numbers are small and outlined; announcements (READY, waves) keep the larger size
+      const combat = /^[-+]\d/.test(ft.text);
+      ctx.font = combat ? 'bold 9px "JetBrains Mono", monospace' : 'bold 12px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
+      if (combat) {
+        ctx.lineWidth = 2.2;
+        ctx.strokeStyle = 'rgba(8,12,16,0.75)';
+        ctx.strokeText(ft.text, ft.x, ft.y - yOffset);
+      }
+      ctx.fillStyle = ft.color;
       ctx.fillText(ft.text, ft.x, ft.y - yOffset);
       ctx.restore();
     });

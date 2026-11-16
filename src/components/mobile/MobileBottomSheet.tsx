@@ -99,7 +99,7 @@ interface MobileBottomSheetProps {
   onTriggerNukeTargeting: () => void;
   onSetFormation: (formation: SquadFormation) => void;
   onTriggerMoveTargeting?: () => void;
-  activeInteractionMode?: 'NORMAL' | 'MOVE_TARGET' | 'ATTACK_TARGET' | 'BOX_SELECT';
+  activeInteractionMode?: 'NORMAL' | 'MOVE_TARGET' | 'ATTACK_TARGET' | 'DEFEND_TARGET' | 'PATROL_TARGET' | 'BOX_SELECT';
   onOpenAdvisor?: () => void;
   onPreviewRecommendation?: (rec: BuildingPlacementRecommendation) => void;
   onSelectAllArmy?: () => void;
@@ -497,172 +497,108 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30 pointer-events-auto select-none">
-      {/* 1. SELECTED UNITS COMMAND DOCK (Matching Reference Screenshot c7b881fb) */}
+      {/* 1. SELECTED UNITS COMMAND DOCK (V12): compact by default (count + MOVE | ATTACK | DEFEND | MORE);
+          MORE expands filters, formation and secondary orders in place. */}
       {selectedUnits.length > 0 && (
-        <div className="mx-auto w-[min(calc(100vw-12px),580px)] mb-1 bg-[#101820]/95 backdrop-blur-md border border-[#2FB68A]/60 rounded-2xl p-2 shadow-2xl animate-in slide-in-from-bottom-2 duration-200">
-          <div className="flex items-center justify-between gap-1 pb-1.5 border-b border-[#1B2730] text-xs">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="w-2 h-2 rounded-full bg-[#2FB68A] animate-pulse" />
-              <span className="font-display font-bold text-xs tracking-wider text-[#F1F5F7] uppercase truncate">
-                SELECTED: {selectedUnits.length} UNITS
+        <div
+          data-testid="selection-dock"
+          data-expanded={showSecondaryUnitActions ? '1' : '0'}
+          className="mx-auto w-[min(calc(100vw-12px),520px)] mb-1 bg-[#0F1924]/94 backdrop-blur-md border border-[#2FB68A]/45 rounded-xl px-1.5 pt-1 pb-1.5 shadow-xl animate-in slide-in-from-bottom-2 duration-200"
+        >
+          <div className="flex items-center justify-between gap-1 h-6 px-0.5">
+            <span className="flex items-center gap-1.5 min-w-0 font-display font-bold text-[11px] tracking-wider text-[#E6EDF3] uppercase" data-testid="selection-count">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#2FB68A]" />
+              <span className="truncate">{selectedUnits.length} {selectedUnits.length === 1 ? 'UNIT' : 'UNITS'} SELECTED</span>
+            </span>
+            {activeInteractionMode !== 'NORMAL' && activeInteractionMode !== 'BOX_SELECT' && (
+              <span className="text-[10px] font-semibold text-[#E7B45B] truncate" data-testid="command-hint">
+                {activeInteractionMode === 'MOVE_TARGET' ? 'Tap destination' : activeInteractionMode === 'ATTACK_TARGET' ? 'Tap target' : activeInteractionMode === 'DEFEND_TARGET' ? 'Tap position to defend' : 'Tap patrol point'}
               </span>
-            </div>
-
-            {/* Quick Formation / Squad shortcuts */}
-            <div className="flex items-center gap-1 shrink-0 text-[10px]">
+            )}
+            {onClearSelection && (
               <button
-                onClick={() => onSetFormation('wedge')}
-                className="px-2 py-0.5 rounded-lg bg-[#1B2730] hover:bg-[#22323e] text-[#4B91B5] font-bold"
+                onClick={() => { triggerHaptic(); onClearSelection(); }}
+                className="w-6 h-6 rounded-md text-[#A8B6C2] hover:text-white flex items-center justify-center"
+                title="Clear selection" aria-label="Clear selection" data-testid="clear-selection"
               >
-                WEDGE
+                <X className="w-3.5 h-3.5" />
               </button>
-              <button
-                onClick={() => onSetFormation('line')}
-                className="px-2 py-0.5 rounded-lg bg-[#1B2730] hover:bg-[#22323e] text-[#4B91B5] font-bold"
-              >
-                LINE
-              </button>
-            </div>
+            )}
           </div>
 
-          {/* One-tap selection filters (existing unit categories only) */}
-          <div className="flex items-center gap-1 pt-1.5 overflow-x-auto no-scrollbar" role="group" aria-label="Selection filters" data-testid="selection-filters">
-            {([
-              ['All', onSelectAllArmy], ['Idle', onSelectIdleUnits], ['Combat', onSelectCombatUnits],
-              ['Infantry', onSelectInfantry], ['Vehicles', onSelectTanks], ['Aircraft', onSelectAirUnits], ['Clear', onClearSelection],
-            ] as [string, (() => void) | undefined][]).filter(([, fn]) => fn).map(([label, fn]) => (
-              <button
-                key={label}
-                onClick={() => { triggerHaptic(); fn!(); }}
-                className={`shrink-0 px-2.5 h-8 rounded-lg text-[10px] font-bold border active:scale-95 ${
-                  label === 'Clear' ? 'bg-[#F06470]/15 border-[#F06470]/50 text-[#F06470]' : 'bg-[#1B2730] border-[#2c3e50] text-[#F1F5F7]'
-                }`}
-              >
-                {label === 'All' ? 'Select All' : label === 'Clear' ? 'Clear Selection' : label}
-              </button>
-            ))}
-          </div>
-
-          {/* Unit Breakdown Chips Row & Primary Actions */}
-          <div className="flex items-center justify-between gap-1.5 pt-1.5 overflow-x-auto no-scrollbar">
-            {/* Filter Chips by Type */}
-            <div className="flex items-center gap-1 min-w-0 overflow-x-auto no-scrollbar">
-              {selectedTypeCounts.map(([type, count]) => {
-                const cfg = UNIT_CONFIGS[type as UnitType];
-                return (
-                  <button
-                    key={type}
-                    onClick={() => {
-                      triggerHaptic();
-                      if (onFilterSelectionToType) onFilterSelectionToType(type);
-                    }}
-                    className="flex items-center gap-1 px-2 py-1 rounded-xl bg-[#1B2730] hover:bg-[#22323e] border border-[#2c3e50] text-[#F1F5F7] active:scale-95 transition-all shrink-0 min-h-[38px]"
-                    title={`Select all ${cfg?.name || type}`}
-                  >
-                    {renderUnitThumbnail(type as UnitType)}
-                    <span className="font-bold text-xs font-mono-numbers">x{count}</span>
+          {showSecondaryUnitActions && (
+            <div className="space-y-1 pb-1 pt-0.5" data-testid="selection-more">
+              <div className="grid grid-cols-3 gap-1" role="group" aria-label="Selection filters" data-testid="selection-filters">
+                {([
+                  ['Select All', onSelectAllArmy], ['Idle', onSelectIdleUnits], ['Combat', onSelectCombatUnits],
+                  ['Infantry', onSelectInfantry], ['Vehicles', onSelectTanks], ['Aircraft', onSelectAirUnits],
+                ] as [string, (() => void) | undefined][]).filter(([, fn]) => fn).map(([label, fn]) => (
+                  <button key={label} onClick={() => { triggerHaptic(); fn!(); }}
+                    className="h-7 rounded-md text-[10.5px] font-semibold bg-[#16222F] border border-[#253446] text-[#E6EDF3] active:scale-95">
+                    {label}
                   </button>
-                );
-              })}
-            </div>
-
-            {/* 3 Large Action Buttons: MOVE | ATTACK | DEFEND */}
-            <div className="flex items-center gap-1 shrink-0">
-              {/* MOVE */}
-              <button
-                onClick={() => {
-                  triggerHaptic();
-                  onIssueUnitCommandType('move');
-                }}
-                className={`flex items-center justify-center gap-1 h-9 px-3 rounded-xl font-display font-bold text-xs tracking-wider transition-all min-h-[38px] ${
-                  activeInteractionMode === 'MOVE_TARGET'
-                    ? 'bg-[#2FB68A] text-[#101820] shadow-md shadow-[#2FB68A]/30'
-                    : 'bg-[#1B2730] hover:bg-[#22323e] text-[#2FB68A] border border-[#2FB68A]/40'
-                }`}
-              >
-                <Navigation className="w-3.5 h-3.5" />
-                <span>MOVE</span>
-              </button>
-
-              {/* ATTACK */}
-              <button
-                onClick={() => {
-                  triggerHaptic();
-                  onIssueUnitCommandType('attack');
-                }}
-                className={`flex items-center justify-center gap-1 h-9 px-3 rounded-xl font-display font-bold text-xs tracking-wider transition-all min-h-[38px] ${
-                  activeInteractionMode === 'ATTACK_TARGET'
-                    ? 'bg-[#D94F59] text-white shadow-md shadow-[#D94F59]/30'
-                    : 'bg-[#1B2730] hover:bg-[#22323e] text-[#D94F59] border border-[#D94F59]/40'
-                }`}
-              >
-                <Sword className="w-3.5 h-3.5" />
-                <span>ATTACK</span>
-              </button>
-
-              {/* DEFEND */}
-              <button
-                onClick={() => {
-                  triggerHaptic();
-                  onIssueUnitCommandType('defend');
-                }}
-                className="flex items-center justify-center gap-1 h-9 px-2.5 rounded-xl bg-[#1B2730] hover:bg-[#22323e] text-[#4B91B5] border border-[#4B91B5]/40 font-display font-bold text-xs tracking-wider transition-all min-h-[38px]"
-              >
-                <Shield className="w-3.5 h-3.5" />
-                <span>DEFEND</span>
-              </button>
-
-              {/* MORE COMMANDS POPUP */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowSecondaryUnitActions(p => !p)}
-                  className="w-9 h-9 rounded-xl bg-[#1B2730] hover:bg-[#22323e] text-[#A8B6C2] border border-[#2c3e50] flex items-center justify-center"
-                >
-                  <MoreHorizontal className="w-4 h-4" />
-                </button>
-
-                {showSecondaryUnitActions && (
-                  <div className="absolute bottom-11 right-0 w-36 bg-[#101820] border border-[#2c3e50] rounded-xl p-1.5 shadow-2xl flex flex-col gap-1 z-50 text-[11px] font-bold">
-                    <button
-                      onClick={() => {
-                        onIssueUnitCommandType('stop');
-                        setShowSecondaryUnitActions(false);
-                      }}
-                      className="px-2 py-1.5 rounded-lg text-left text-[#A8B6C2] hover:bg-[#1B2730] hover:text-white"
-                    >
-                      STOP
-                    </button>
-                    <button
-                      onClick={() => {
-                        onIssueUnitCommandType('hold');
-                        setShowSecondaryUnitActions(false);
-                      }}
-                      className="px-2 py-1.5 rounded-lg text-left text-[#A8B6C2] hover:bg-[#1B2730] hover:text-white"
-                    >
-                      HOLD POSITION
-                    </button>
-                    <button
-                      onClick={() => {
-                        onIssueUnitCommandType('retreat');
-                        setShowSecondaryUnitActions(false);
-                      }}
-                      className="px-2 py-1.5 rounded-lg text-left text-[#E5A93D] hover:bg-[#1B2730]"
-                    >
-                      RETREAT TO BASE
-                    </button>
-                    <button
-                      onClick={() => {
-                        onIssueUnitCommandType('patrol');
-                        setShowSecondaryUnitActions(false);
-                      }}
-                      className="px-2 py-1.5 rounded-lg text-left text-[#4B91B5] hover:bg-[#1B2730]"
-                    >
-                      PATROL
-                    </button>
-                  </div>
-                )}
+                ))}
               </div>
+              <div className="grid grid-cols-4 gap-1">
+                {([
+                  ['Stop', 'stop', 'text-[#A8B6C2]'], ['Patrol', 'patrol', 'text-[#4B91B5]'], ['Hold', 'hold', 'text-[#E6EDF3]'], ['Retreat', 'retreat', 'text-[#E5A93D]'],
+                ] as [string, string, string][]).map(([label, cmd, tone]) => (
+                  <button key={cmd} onClick={() => { triggerHaptic(); onIssueUnitCommandType(cmd as Parameters<typeof onIssueUnitCommandType>[0]); if (cmd !== 'patrol') setShowSecondaryUnitActions(false); }}
+                    className={`h-7 rounded-md text-[10.5px] font-bold bg-[#16222F] border border-[#253446] active:scale-95 ${tone}`}>
+                    {label === 'Hold' ? 'Hold Position' : label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-[9.5px] font-semibold text-[#8EA0B0] uppercase tracking-wide shrink-0">Formation</span>
+                <div className="flex-1 grid grid-cols-4 gap-1">
+                  {(['line', 'wedge', 'column', 'spread'] as SquadFormation[]).map(f => (
+                    <button key={f} onClick={() => { triggerHaptic(); onSetFormation(f); }}
+                      className={`h-7 rounded-md text-[10px] font-semibold capitalize border active:scale-95 ${engine.currentFormation === f ? 'bg-[#4B91B5]/25 border-[#4B91B5]/70 text-[#9FD3F0]' : 'bg-[#16222F] border-[#253446] text-[#A8B6C2]'}`}>
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {selectedTypeCounts.length > 1 && (
+                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+                  {selectedTypeCounts.map(([type, count]) => (
+                    <button key={type} onClick={() => { triggerHaptic(); onFilterSelectionToType?.(type); }}
+                      className="shrink-0 h-7 px-1.5 rounded-md bg-[#16222F] border border-[#253446] text-[#E6EDF3] flex items-center gap-1"
+                      title={`Select only ${UNIT_CONFIGS[type as UnitType]?.name || type}`}>
+                      {renderUnitThumbnail(type as UnitType)}
+                      <span className="text-[10px] font-bold font-mono-numbers">{count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
+          )}
+
+          <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-1">
+            {([
+              ['move', 'MOVE', 'MOVE_TARGET', '#2FB68A', <Navigation key="i" className="w-3.5 h-3.5" />],
+              ['attack', 'ATTACK', 'ATTACK_TARGET', '#D94F59', <Sword key="i" className="w-3.5 h-3.5" />],
+              ['defend', 'DEFEND', 'DEFEND_TARGET', '#4B91B5', <Shield key="i" className="w-3.5 h-3.5" />],
+            ] as [string, string, string, string, React.ReactNode][]).map(([cmd, label, mode, color, icon]) => {
+              const on = activeInteractionMode === mode;
+              return (
+                <button key={cmd} data-testid={`cmd-${cmd}`} onClick={() => { triggerHaptic(); onIssueUnitCommandType(cmd as Parameters<typeof onIssueUnitCommandType>[0]); }}
+                  className="h-9 rounded-lg flex items-center justify-center gap-1 font-display font-bold text-[11px] tracking-wider border transition-all active:scale-95"
+                  style={on ? { background: color, color: '#0B1218', borderColor: color } : { background: '#16222F', color, borderColor: color + '66' }}>
+                  {icon}<span>{label}</span>
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setShowSecondaryUnitActions(p => !p)}
+              data-testid="cmd-more"
+              aria-expanded={showSecondaryUnitActions}
+              className={`h-9 px-2.5 rounded-lg border flex items-center justify-center gap-0.5 text-[10.5px] font-bold ${showSecondaryUnitActions ? 'bg-[#253446] border-[#3a4d63] text-white' : 'bg-[#16222F] border-[#253446] text-[#A8B6C2]'}`}
+              title="More orders, filters and formation"
+            >
+              <MoreHorizontal className="w-4 h-4" /><span className="hidden min-[380px]:inline">MORE</span>
+            </button>
           </div>
         </div>
       )}
@@ -1097,13 +1033,13 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
       {/* 3. PERMANENT 5-BUTTON MOBILE RTS DOCK (BUILD | ARMY | DEFENSE | AI | MENU) */}
       <nav
         aria-label="Tactical Command Bar"
-        className="bg-[#101820]/95 backdrop-blur-md border-t border-[#1B2730] pb-safe px-2 py-1.5"
+        className="bg-[#0C141D]/96 backdrop-blur-md border-t border-[#1B2730] pb-safe px-2 py-1" data-testid="bottom-nav"
       >
         <div className="max-w-xl mx-auto grid grid-cols-5 gap-1">
           {/* BUILD */}
           <button
             onClick={e => handleTabClick('build', e)}
-            className={`flex flex-col items-center justify-center gap-1 h-12 rounded-xl transition-all min-h-[48px] ${
+            className={`flex flex-col items-center justify-center gap-0.5 h-11 rounded-lg transition-all duration-150 min-h-[44px] ${
               activeTab === 'build' && sheetSnap !== 'collapsed'
                 ? 'bg-[#2FB68A]/20 text-[#2FB68A] border border-[#2FB68A]/60 shadow-lg shadow-[#2FB68A]/15'
                 : 'text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]'
@@ -1116,7 +1052,7 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
           {/* ARMY */}
           <button
             onClick={e => handleTabClick('army', e)}
-            className={`flex flex-col items-center justify-center gap-1 h-12 rounded-xl transition-all min-h-[48px] ${
+            className={`flex flex-col items-center justify-center gap-0.5 h-11 rounded-lg transition-all duration-150 min-h-[44px] ${
               activeTab === 'army' && sheetSnap !== 'collapsed'
                 ? 'bg-[#2FB68A]/20 text-[#2FB68A] border border-[#2FB68A]/60 shadow-lg shadow-[#2FB68A]/15'
                 : 'text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]'
@@ -1129,7 +1065,7 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
           {/* DEFENSE */}
           <button
             onClick={e => handleTabClick('defense', e)}
-            className={`flex flex-col items-center justify-center gap-1 h-12 rounded-xl transition-all min-h-[48px] ${
+            className={`flex flex-col items-center justify-center gap-0.5 h-11 rounded-lg transition-all duration-150 min-h-[44px] ${
               activeTab === 'defense' && sheetSnap !== 'collapsed'
                 ? 'bg-[#2FB68A]/20 text-[#2FB68A] border border-[#2FB68A]/60 shadow-lg shadow-[#2FB68A]/15'
                 : 'text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]'
@@ -1142,7 +1078,7 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
           {/* AI */}
           <button
             onClick={e => handleTabClick('ai', e)}
-            className={`flex flex-col items-center justify-center gap-1 h-12 rounded-xl transition-all min-h-[48px] ${
+            className={`flex flex-col items-center justify-center gap-0.5 h-11 rounded-lg transition-all duration-150 min-h-[44px] ${
               activeTab === 'ai' && sheetSnap !== 'collapsed'
                 ? 'bg-[#2FB68A]/20 text-[#2FB68A] border border-[#2FB68A]/60 shadow-lg shadow-[#2FB68A]/15'
                 : 'text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]'
@@ -1155,7 +1091,7 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
           {/* MENU */}
           <button
             onClick={e => handleTabClick('menu', e)}
-            className="flex flex-col items-center justify-center gap-1 h-12 rounded-xl transition-all min-h-[48px] text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]"
+            className="flex flex-col items-center justify-center gap-0.5 h-11 rounded-lg transition-all duration-150 min-h-[44px] text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]"
           >
             <MenuIcon className="w-4 h-4 stroke-[2.2]" />
             <span className="text-[10px] font-display font-bold tracking-wider">MORE</span>

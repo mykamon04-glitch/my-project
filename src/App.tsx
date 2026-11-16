@@ -58,7 +58,7 @@ export default function App() {
   const [isCinematicMode, setIsCinematicMode] = useState<boolean>(false);
   const [isTouchMultiSelect, setIsTouchMultiSelect] = useState<boolean>(false);
   const [followUnit, setFollowUnit] = useState<boolean>(false);
-  const [activeInteractionMode, setActiveInteractionMode] = useState<'NORMAL' | 'MOVE_TARGET' | 'ATTACK_TARGET' | 'BOX_SELECT'>('NORMAL');
+  const [activeInteractionMode, setActiveInteractionMode] = useState<'NORMAL' | 'MOVE_TARGET' | 'ATTACK_TARGET' | 'DEFEND_TARGET' | 'PATROL_TARGET' | 'BOX_SELECT'>('NORMAL');
   const [, setTick] = useState<number>(0);
 
   // Robust Mobile Camera System with Smart Recovery
@@ -918,6 +918,17 @@ export default function App() {
       return;
     }
 
+    // 4b. Defend / patrol targeting (V12): the tapped point becomes the defensive position / patrol waypoint
+    if (activeInteractionMode === 'DEFEND_TARGET' || activeInteractionMode === 'PATROL_TARGET') {
+      const ids = selectedUnitIdsRef.current;
+      if (ids.length > 0) {
+        if (activeInteractionMode === 'DEFEND_TARGET') engine.issueDefend(ids, world);
+        else engine.issuePatrol(ids, world);
+      }
+      setActiveInteractionMode('NORMAL');
+      return;
+    }
+
     // 5. Direct Troop Control (Touch-to-Move / Tap-to-Attack)
     const unitHitRadius = isTouch
       ? Math.max(38, 38 / cameraRef.current.zoom)
@@ -1711,94 +1722,6 @@ export default function App() {
                 </aside>
               )}
 
-              {/* TOP LEFT: MISSION OBJECTIVES CARD (Matching Reference Screenshot c7b881fb) */}
-              {!isCinematicMode && (
-                <div className="fixed top-[var(--hud-top)] left-2 sm:left-4 z-20 pointer-events-auto select-none max-w-[240px] max-[560px]:max-w-[calc(100vw-152px)]">
-                  <div className="bg-[#101820]/90 backdrop-blur-md border border-[#1B2730] rounded-2xl p-2.5 shadow-xl font-mono text-xs">
-                    <button
-                      onClick={() => setShowObjectives(p => !p)}
-                      className="w-full flex items-center justify-between gap-1 text-left"
-                    >
-                      <div className="flex items-center gap-1.5 text-[#2FB68A] font-display font-bold text-xs tracking-wider">
-                        <Target className="w-3.5 h-3.5" />
-                        <span>MISSION OBJECTIVES</span>
-                      </div>
-                      <ChevronDown
-                        className={`w-3.5 h-3.5 text-[#A8B6C2] transition-transform ${
-                          showObjectives ? 'rotate-180' : ''
-                        }`}
-                      />
-                    </button>
-
-                    {showObjectives && (
-                      <div className="mt-2 space-y-1.5 text-[11px] pt-1.5 border-t border-[#1B2730]">
-                        <div className="flex items-start gap-1.5">
-                          <CheckSquare className="w-3.5 h-3.5 text-[#2FB68A] shrink-0 mt-0.5" />
-                          <span className="text-[#F1F5F7]">
-                            Secure Titanium Deposits (
-                            {
-                              engine.mapData.resourceNodes.filter(n =>
-                                engine.buildings.some(
-                                  b =>
-                                    b.faction === 'player' &&
-                                    Math.hypot(
-                                      b.pixelX - n.x * engine.mapData.tileSize,
-                                      b.pixelY - n.y * engine.mapData.tileSize
-                                    ) < 350
-                                )
-                              ).length
-                            }/
-                            {Math.max(2, engine.mapData.resourceNodes.length)})
-                          </span>
-                        </div>
-                        <div className="flex items-start gap-1.5">
-                          {engine.buildings.filter(b => b.type === 'coin_generator' && b.faction === 'player' && b.hp > 0).length >= 2 ? (
-                            <CheckSquare className="w-3.5 h-3.5 text-[#2FB68A] shrink-0 mt-0.5" />
-                          ) : (
-                            <div className="w-3.5 h-3.5 border border-[#A8B6C2]/60 rounded-sm shrink-0 mt-0.5" />
-                          )}
-                          <span
-                            // Progress is capped at the requirement (2/2); the real count stays available for diagnostics.
-                            title={`${engine.buildings.filter(b => b.type === 'coin_generator' && b.faction === 'player' && b.hp > 0).length} refineries built (objective needs 2)`}
-                            className={
-                              engine.buildings.filter(b => b.type === 'coin_generator' && b.faction === 'player' && b.hp > 0).length >= 2
-                                ? 'text-[#F1F5F7]'
-                                : 'text-[#A8B6C2]'
-                            }
-                          >
-                            Build Second Refinery (
-                            {Math.min(2, engine.buildings.filter(b => b.type === 'coin_generator' && b.faction === 'player' && b.hp > 0).length)}/2)
-                          </span>
-                        </div>
-                        <div className="flex items-start gap-1.5">
-                          {engine.gameStatus === 'victory' ? (
-                            <CheckSquare className="w-3.5 h-3.5 text-[#2FB68A] shrink-0 mt-0.5" />
-                          ) : (
-                            <div className="w-3.5 h-3.5 border border-[#A8B6C2]/60 rounded-sm shrink-0 mt-0.5" />
-                          )}
-                          <span className="text-[#A8B6C2]">Defend Headquarters</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Camera: HQ / Fit / Follow / Zoom / Radar live once in the top camera row. This button has no
-                      equivalent there (it jumps to the current selection), so it stays, but only when it can act. */}
-                  {selectedUnitIds.length > 0 && (
-                    <div className="mt-2 flex items-center gap-1.5">
-                      <button
-                        onClick={handleFocusSelected}
-                        className="h-8 px-2.5 rounded-xl bg-[#131F2D]/90 border border-[#2a3b4f] text-[#E7B45B] flex items-center gap-1.5 text-[11px] font-semibold shadow-md active:scale-95 transition-transform"
-                        title="Focus on Selected Units"
-                        aria-label="Focus on selected units"
-                      >
-                        <Navigation className="w-3.5 h-3.5" />
-                        <span>Selection</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* Floating Miniature Radar (Positioned safely below the HUD header) */}
               {!isCinematicMode && showRadar && (
@@ -1849,16 +1772,15 @@ export default function App() {
                     if (cmd === 'retreat') {
                       engine.issueRetreat(selectedUnitIds);
                     } else if (cmd === 'attack_move' || cmd === 'attack') {
-                      setActiveInteractionMode('ATTACK_TARGET');
+                      setActiveInteractionMode(m => (m === 'ATTACK_TARGET' ? 'NORMAL' : 'ATTACK_TARGET'));
                     } else if (cmd === 'defend') {
-                      engine.issueDefend(selectedUnitIds);
-                      soundEngine.playCommandAffirmative();
+                      // V12: tap DEFEND, then tap the position to hold (tap DEFEND again to cancel)
+                      setActiveInteractionMode(m => (m === 'DEFEND_TARGET' ? 'NORMAL' : 'DEFEND_TARGET'));
                     } else if (cmd === 'guard') {
                       engine.issueGuard(selectedUnitIds);
                       soundEngine.playCommandAffirmative();
                     } else if (cmd === 'patrol') {
-                      engine.issuePatrol(selectedUnitIds);
-                      soundEngine.playCommandAffirmative();
+                      setActiveInteractionMode(m => (m === 'PATROL_TARGET' ? 'NORMAL' : 'PATROL_TARGET'));
                     } else if (cmd === 'hold') {
                       engine.issueHold(selectedUnitIds);
                       soundEngine.playCommandAffirmative();
@@ -1866,7 +1788,7 @@ export default function App() {
                       engine.issueStop(selectedUnitIds);
                       soundEngine.playCommandAffirmative();
                     } else if (cmd === 'move') {
-                      setActiveInteractionMode('MOVE_TARGET');
+                      setActiveInteractionMode(m => (m === 'MOVE_TARGET' ? 'NORMAL' : 'MOVE_TARGET'));
                     } else if (cmd === 'auto_heal' || cmd === 'heal') {
                       engine.issueHeal(selectedUnitIds);
                       soundEngine.playCommandAffirmative();

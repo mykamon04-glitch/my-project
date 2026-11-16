@@ -22,7 +22,7 @@
   --id-text-2: #A7B7C7;
   --id-radius: 14px;
   /* Height of the two-row top HUD (resource bar + camera tools). Floating panels hang below it. */
-  --hud-top: calc(env(safe-area-inset-top, 0px) + 106px);
+  --hud-top: calc(env(safe-area-inset-top, 0px) + 84px); /* V12: slim resource bar + mission/camera line */
 }
 
 @layer base {

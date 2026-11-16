@@ -96,7 +96,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     autoRepair: true,
     retreatThreshold: 0.25,
     radarVisibility: true,
-    radarSize: 'standard',
+    radarSize: 'compact',
     alertSoundEnabled: true,
     showThreatOverlay: true,
     showDefenseZoneOverlay: true,
@@ -1219,7 +1219,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           notifyChange(`Radar size set to ${size}`);
                         }}
                         className={`px-2.5 py-1 rounded-lg text-xs font-bold uppercase transition-colors ${
-                          (engine?.settings.radarSize || currentSettings.radarSize || 'standard') === size
+                          (engine?.settings.radarSize || currentSettings.radarSize || 'compact') === size
                             ? 'bg-[#38B98A] text-[#101820]'
                             : 'bg-[#1C2933] text-[#A9B8C5] hover:text-[#F4F7FA]'
                         }`}

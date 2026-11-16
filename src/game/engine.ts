@@ -1526,17 +1526,7 @@ export class GameEngine {
             );
             u.hp -= dmg;
             this.tallyDamage(p.faction, dmg);
-            if (this.settings.showDamageNumbers) {
-              this.floatingTexts.push({
-                id: Math.random().toString(),
-                x: u.x,
-                y: u.y - 12,
-                text: `-${dmg}`,
-                color: '#ef4444',
-                life: 0,
-                maxLife: 0.8,
-              });
-            }
+            this.pushDamageNumber(u, dmg, 12, 0.8);
           }
         }
       });
@@ -1558,17 +1548,7 @@ export class GameEngine {
           const dmg = calculateDamage(p.type, 'infantry', UNIT_CONFIGS[u.type].category, p.damage, u.armor);
           u.hp -= dmg;
             this.tallyDamage(p.faction, dmg);
-          if (this.settings.showDamageNumbers) {
-            this.floatingTexts.push({
-              id: Math.random().toString(),
-              x: u.x,
-              y: u.y - 10,
-              text: `-${dmg}`,
-              color: '#ef4444',
-              life: 0,
-              maxLife: 0.7,
-            });
-          }
+          this.pushDamageNumber(u, dmg, 10, 0.7);
         }
       } else if (p.targetBuildingId) {
         const b = this.buildings.find(o => o.id === p.targetBuildingId && o.hp > 0);
@@ -1768,6 +1748,26 @@ export class GameEngine {
       this.defenseWave++;
       this.nextWaveTimer = Math.max(30, 60 - this.defenseWave * 3);
     }
+  }
+
+  /**
+   * Damage numbers (V12): whole numbers only, and hits on the same unit within a short window are merged into one
+   * label instead of stacking a new one per shot, so the battlefield does not fill with overlapping text.
+   */
+  private pushDamageNumber(u: Unit, dmg: number, lift: number, life: number) {
+    if (!this.settings.showDamageNumbers || !(dmg > 0)) return;
+    const key = 'dmg:' + u.id;
+    const prev = this.floatingTexts.find(t => t.id === key && t.life < 0.35);
+    if (prev) {
+      const total = (prev.value ?? 0) + dmg;
+      prev.value = total;
+      prev.text = `-${Math.round(total)}`;
+      prev.x = u.x; prev.y = u.y - lift;
+      prev.life = 0;
+      return;
+    }
+    this.floatingTexts.push({ id: key, x: u.x, y: u.y - lift, text: `-${Math.round(dmg)}`, color: '#ef4444', life: 0, maxLife: life, value: dmg });
+    if (this.floatingTexts.length > 60) this.floatingTexts.splice(0, this.floatingTexts.length - 60);
   }
 
   private tallyDamage(faction: Faction, dmg: number) {

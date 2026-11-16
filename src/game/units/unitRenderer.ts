@@ -194,23 +194,46 @@ export class UnitArtRenderer {
   }
 
   /** Health bar, veterancy and squad badge above a unit, upright (never rotated with the unit). */
-  drawOverlay(ctx: CanvasRenderingContext2D, u: Unit, top: number, controlGroups?: Record<number, string[]>) {
+  /** Labels placed this frame (world rects), so health numbers never overlap each other. */
+  private labels: number[] = [];
+  beginOverlays() { this.labels.length = 0; }
+  private free(x: number, y: number, w: number, h: number): boolean {
+    const L = this.labels;
+    for (let i = 0; i < L.length; i += 4) {
+      if (x < L[i] + L[i + 2] && x + w > L[i] && y < L[i + 1] + L[i + 3] && y + h > L[i + 1]) return false;
+    }
+    L.push(x, y, w, h);
+    return true;
+  }
+
+  /**
+   * Adaptive health indicators (V12):
+   *   healthy and unselected -> nothing; damaged -> a small bar; selected -> bar, and the whole-number value
+   *   ("95/120") only when few units are selected (`detail`) and the label has room.
+   */
+  drawOverlay(ctx: CanvasRenderingContext2D, u: Unit, top: number, controlGroups?: Record<number, string[]>, detail = true) {
     const kind = unitKind(u.type);
     const isVehicle = kind !== 'infantry';
-    let y = top - 4;
-    if (u.selected || u.hp < u.maxHp) {
+    let y = top - 3;
+    const damaged = u.hp < u.maxHp - 0.5;
+    if (damaged || (u.selected && detail)) {
       const safeMax = Math.max(1, Math.round(Number.isFinite(u.maxHp) ? u.maxHp : 100));
       const safeHp = Math.max(0, Math.min(safeMax, Math.round(Number.isFinite(u.hp) ? u.hp : 0)));
       const ratio = safeHp / safeMax;
-      const w = isVehicle ? 26 : 16;
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-      ctx.fillRect(u.x - w / 2 - 1, y - 1, w + 2, 5);
-      ctx.fillStyle = ratio > 0.5 ? '#38B98A' : ratio > 0.25 ? '#F2B84B' : '#E45B63';
-      ctx.fillRect(u.x - w / 2, y, w * ratio, 3);
-      if (u.selected) {
-        ctx.font = 'bold 7px monospace'; ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'center';
-        ctx.fillText(`${safeHp}/${safeMax}`, u.x, y - 3);
-        y -= 8;
+      const w = isVehicle ? 22 : 14;
+      ctx.fillStyle = 'rgba(10, 16, 24, 0.85)';
+      ctx.fillRect(u.x - w / 2 - 0.75, y - 0.75, w + 1.5, 3.5);
+      ctx.fillStyle = ratio > 0.5 ? '#3FBF8F' : ratio > 0.25 ? '#E8B44E' : '#E0605A';
+      ctx.fillRect(u.x - w / 2, y, w * ratio, 2);
+      if (u.selected && detail) {
+        const text = `${safeHp}/${safeMax}`;
+        const tw = text.length * 4.3 + 2;
+        if (this.free(u.x - tw / 2, y - 9, tw, 7)) {
+          ctx.font = 'bold 7px monospace'; ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(10,16,24,0.7)'; ctx.fillRect(u.x - tw / 2, y - 9, tw, 7.5);
+          ctx.fillStyle = '#F1F5F9'; ctx.fillText(text, u.x, y - 3);
+          y -= 8;
+        }
       }
       y -= 2;
     }

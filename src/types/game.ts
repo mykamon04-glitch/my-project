@@ -286,6 +286,7 @@ export interface Wreckage {
 }
 
 export interface FloatingText {
+  value?: number; // V12: running total of merged damage numbers
   id: string;
   x: number;
   y: number;

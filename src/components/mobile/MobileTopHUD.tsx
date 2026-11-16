@@ -38,6 +38,7 @@ import { GameEngine } from '../../game/engine';
 import { BuildingType } from '../../types/game';
 import { BUILDING_CONFIGS } from '../../data/gameData';
 import { formatCompact, formatSigned } from '../../utils/format';
+import { MissionTracker } from './MissionTracker';
 
 interface MobileTopHUDProps {
   engine: GameEngine;
@@ -88,12 +89,12 @@ const HudChip: React.FC<{ tone: keyof typeof CHIP_TONES; icon: React.ReactNode; 
     onPointerCancel={onLongPress ? clear : undefined}
     onContextMenu={onLongPress ? ev => ev.preventDefault() : undefined}
     title={title}
-    className={`min-w-0 h-10 flex items-center justify-center min-[420px]:justify-start gap-1 px-1 min-[420px]:px-1.5 rounded-xl border bg-[#1B2B3C] active:scale-95 transition-all ${CHIP_TONES[tone]}`}
+    className={`flex-1 min-w-0 h-8 flex items-center justify-center gap-1 px-1 rounded-lg border bg-[#16222F] active:scale-95 transition-all ${CHIP_TONES[tone]}`}
   >
-    <span className="hidden min-[420px]:block">{icon}</span>
-    <span className="min-w-0 flex flex-col text-center min-[420px]:text-left leading-none">
-      <span className="truncate text-[12px] font-bold tabular-nums text-[#F1F5F9]">{value}</span>
-      <span className="truncate text-[9px] mt-0.5 tabular-nums text-[#A7B7C7]">{sub}</span>
+    <span className="hidden min-[360px]:block">{icon}</span>
+    <span className="min-w-0 flex flex-col items-start leading-none">
+      <span className="truncate max-w-full text-[11.5px] font-bold tabular-nums text-[#F1F5F9]">{value}</span>
+      <span className="truncate max-w-full text-[8.5px] mt-[2px] tabular-nums text-[#9FB0C0] uppercase tracking-wide">{sub}</span>
     </span>
   </button>
   );
@@ -160,117 +161,94 @@ export const MobileTopHUD: React.FC<MobileTopHUDProps> = ({
 
   return (
     <>
-      {/* 1. TOP HUD — compact grid: nothing scrolls, every chip shrinks (min-w-0) and abbreviates */}
+      {/* 1. TOP HUD (V12): one slim resource bar; mission chip + icon camera controls on a second, transparent line */}
       <header
         className="fixed top-0 inset-x-0 z-30 pointer-events-none select-none"
+        data-testid="top-hud"
         style={{
-          paddingTop: 'max(6px, env(safe-area-inset-top, 6px))',
-          paddingLeft: 'max(8px, env(safe-area-inset-left, 8px))',
-          paddingRight: 'max(8px, env(safe-area-inset-right, 8px))',
+          paddingTop: 'max(4px, env(safe-area-inset-top, 4px))',
+          paddingLeft: 'max(6px, env(safe-area-inset-left, 6px))',
+          paddingRight: 'max(6px, env(safe-area-inset-right, 6px))',
         }}
       >
-        <div
-          className="pointer-events-auto mx-auto w-full max-w-5xl grid items-center gap-1.5 sm:![grid-template-columns:auto_repeat(4,minmax(0,1fr))_auto] rounded-2xl border border-[#2a3b4f] bg-[#131F2D]/95 backdrop-blur-md p-1.5 shadow-xl"
-          style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr)) auto' }}
-        >
-          {/* Brand */}
-          <div className="hidden sm:flex items-center gap-2 pl-0.5">
-            <div className="w-9 h-9 rounded-xl bg-[#1B2B3C] border border-[#22C99A]/40 flex items-center justify-center">
-              <Shield className="w-4 h-4 text-[#22C99A]" />
-            </div>
-            <div className="hidden lg:flex flex-col pr-2">
-              <span className="font-display font-bold text-xs tracking-wider text-[#F1F5F9] leading-none">IRON DOMINION</span>
-              <span className="text-[9px] tracking-widest text-[#22C99A] uppercase mt-0.5">Real-time strategy</span>
-            </div>
-          </div>
-
+        <div className="pointer-events-auto mx-auto w-full max-w-3xl flex items-stretch gap-1 rounded-xl border border-[#253446] bg-[#0F1924]/92 backdrop-blur-md p-1 shadow-lg">
           <HudChip
             tone="warn"
-            title="Military Credits - tap for economy breakdown"
+            title="Credits and income - tap for economy breakdown"
             onClick={() => setActiveModal(activeModal === 'credits' ? null : 'credits')}
-            icon={<Coins className="w-4 h-4 shrink-0" />}
+            icon={<Coins className="w-3.5 h-3.5 shrink-0" />}
             value={`$${formatCompact(econ.credits)}`}
             sub={`${formatSigned(econ.incomeRate)}/m`}
           />
           <HudChip
             tone={isPowerDeficit ? 'danger' : 'info'}
-            title="Power grid - tap for diagnostics"
+            title="Power: consumed / available - tap for diagnostics"
             onClick={() => setActiveModal(activeModal === 'power' ? null : 'power')}
-            icon={<Zap className="w-4 h-4 shrink-0" />}
-            value={<>{formatSigned(econ.powerSupply - econ.powerDemand)}<span className="hidden min-[400px]:inline text-[9px] font-semibold opacity-70"> GW</span></>}
-            sub={`${formatCompact(econ.powerSupply)}/${formatCompact(econ.powerDemand)}`}
+            icon={<Zap className="w-3.5 h-3.5 shrink-0" />}
+            value={`${formatCompact(econ.powerDemand)}/${formatCompact(econ.powerSupply)}`}
+            sub={isPowerDeficit ? 'LOW POWER' : 'power'}
           />
           <HudChip
             tone={isPopCapped ? 'warn' : 'ok'}
             title="Tap: select all troops · long-press: troop capacity details"
             onClick={() => (onSelectAllTroops ? onSelectAllTroops() : setActiveModal(activeModal === 'pop' ? null : 'pop'))}
             onLongPress={() => setActiveModal(activeModal === 'pop' ? null : 'pop')}
-            icon={<Users className="w-4 h-4 shrink-0" />}
+            icon={<Users className="w-3.5 h-3.5 shrink-0" />}
             value={`${econ.population}/${econ.populationCap}`}
-            sub="Troops"
+            sub="troops"
           />
           <HudChip
             tone={threatLevel === 'CRITICAL' || threatLevel === 'HIGH' ? 'danger' : threatLevel === 'ELEVATED' ? 'warn' : 'ok'}
-            title="Threat early warning"
+            title="Enemy threat level and alerts"
             onClick={() => setActiveModal(activeModal === 'alert' ? null : 'alert')}
-            icon={<AlertTriangle className="w-4 h-4 shrink-0" />}
-            value={String(enemyUnits.length)}
-            sub={threatLevel.charAt(0) + threatLevel.slice(1).toLowerCase()}
+            icon={<AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+            value={threatLevel === 'NOMINAL' ? 'LOW' : threatLevel === 'ELEVATED' ? 'MED' : threatLevel === 'CRITICAL' ? 'CRIT' : 'HIGH'}
+            sub={`${enemyUnits.length} hostile`}
           />
-
           <button
-            onClick={onOpenSettings}
-            className="w-10 h-10 rounded-xl bg-[#1B2B3C] hover:bg-[#223449] border border-[#2a3b4f] flex items-center justify-center active:scale-95 transition-all"
-            title="Menu"
+            onClick={() => setActiveModal(activeModal === 'menu' ? null : 'menu')}
+            className="w-9 shrink-0 rounded-lg bg-[#16222F] hover:bg-[#1E2E40] border border-[#253446] flex items-center justify-center active:scale-95 transition-all"
+            title="Menu and settings"
             aria-label="Menu"
+            data-testid="hud-menu"
           >
-            <Menu className="w-[18px] h-[18px] text-[#F1F5F9]" />
+            <Menu className="w-4 h-4 text-[#E6EDF3]" />
           </button>
         </div>
 
-        {/* TIER 2: camera quick controls (+ radar toggle moved here so the resource row never overflows) */}
-        <div className="pointer-events-none flex flex-wrap items-center gap-1.5 pt-1.5 max-w-5xl mx-auto text-[11px] font-semibold">
-          <div className="pointer-events-auto flex items-center gap-1 bg-[#131F2D]/90 backdrop-blur-md p-1 rounded-xl border border-[#2a3b4f] shadow-md">
-            <button onClick={onCenterHQ} className="h-8 px-2 rounded-lg bg-[#1B2B3C] text-[#22C99A] flex items-center gap-1 active:scale-95 transition-transform" title="Center camera on Headquarters">
-              <Crosshair className="w-3.5 h-3.5" /><span className="hidden min-[400px]:inline">HQ</span>
+        {/* Second line: compact mission tracker (left) and camera tools (right). Transparent, so the battlefield shows. */}
+        <div className="mx-auto w-full max-w-3xl flex items-start justify-between gap-2 pt-1">
+          <MissionTracker engine={engine} />
+          <div className="pointer-events-auto flex items-center gap-0.5 rounded-lg bg-[#0F1924]/80 border border-[#253446] p-0.5" data-testid="camera-tools">
+            <button onClick={onCenterHQ} className="w-7 h-7 rounded-md text-[#22C99A] flex items-center justify-center active:scale-95" title="Center on headquarters" aria-label="Center on headquarters">
+              <Crosshair className="w-3.5 h-3.5" />
             </button>
-            <button onClick={onFitBase} className="h-8 px-2 rounded-lg bg-[#1B2B3C] text-[#39B8F2] flex items-center gap-1 active:scale-95 transition-transform" title="Fit entire base on screen">
-              <Layers className="w-3.5 h-3.5" /><span className="hidden min-[400px]:inline">FIT</span>
+            <button onClick={onFitBase} className="w-7 h-7 rounded-md text-[#39B8F2] flex items-center justify-center active:scale-95" title="Fit base on screen" aria-label="Fit base">
+              <Layers className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={onToggleFollow}
-              className={`h-8 px-2 rounded-lg flex items-center gap-1 active:scale-95 transition-all ${isFollowing ? 'bg-[#22C99A]/25 text-[#22C99A] ring-1 ring-[#22C99A]/60' : 'bg-[#1B2B3C] text-[#A7B7C7]'}`}
-              title="Lock camera to follow selected units"
+              className={`w-7 h-7 rounded-md flex items-center justify-center active:scale-95 ${isFollowing ? 'bg-[#22C99A]/25 text-[#22C99A]' : 'text-[#A7B7C7]'}`}
+              title="Follow selected units" aria-label="Follow selected units" aria-pressed={isFollowing}
             >
-              <Eye className="w-3.5 h-3.5" /><span className="hidden min-[400px]:inline">FOLLOW</span>
+              <Eye className="w-3.5 h-3.5" />
             </button>
-            <button onClick={onCycleZoom} className="h-8 px-2 rounded-lg bg-[#1B2B3C] text-[#F1F5F9] tabular-nums active:scale-95" title="Cycle zoom">
+            <button onClick={onCycleZoom} className="h-7 px-1 min-w-[34px] rounded-md text-[#E6EDF3] text-[10px] font-semibold tabular-nums active:scale-95" title="Cycle zoom">
               {Math.round((currentZoom || 1.0) * 100)}%
             </button>
             {is3D && onRotateCamera && (
-              <button onClick={onRotateCamera} className="h-8 px-2 rounded-lg bg-[#1B2B3C] text-[#39B8F2] flex items-center gap-1 active:scale-95" title="Rotate view 45°">
-                <Compass className="w-3.5 h-3.5" /><span className="hidden min-[400px]:inline">45°</span>
+              <button onClick={onRotateCamera} className="w-7 h-7 rounded-md text-[#39B8F2] flex items-center justify-center active:scale-95" title="Rotate view 45 degrees" aria-label="Rotate view">
+                <Compass className="w-3.5 h-3.5" />
               </button>
             )}
             <button
               onClick={onToggleRadar}
-              className={`h-8 px-2 rounded-lg flex items-center gap-1 active:scale-95 transition-all ${isRadarVisible ? 'bg-[#39B8F2]/20 text-[#39B8F2] ring-1 ring-[#39B8F2]/50' : 'bg-[#1B2B3C] text-[#A7B7C7]'}`}
-              title="Toggle tactical radar"
-              aria-pressed={isRadarVisible}
+              className={`w-7 h-7 rounded-md flex items-center justify-center active:scale-95 ${isRadarVisible ? 'bg-[#39B8F2]/20 text-[#39B8F2]' : 'text-[#A7B7C7]'}`}
+              title="Toggle radar" aria-label="Toggle radar" aria-pressed={isRadarVisible}
             >
-              <Radio className="w-3.5 h-3.5" /><span className="hidden min-[400px]:inline">RADAR</span>
+              <Radio className="w-3.5 h-3.5" />
             </button>
           </div>
-
-          {engine.mode === 'sandbox' && (
-            <button
-              onClick={() => setActiveModal('sandbox')}
-              className="pointer-events-auto h-10 px-2.5 rounded-xl bg-[#F0B84B]/15 border border-[#F0B84B]/50 text-[#F0B84B] flex items-center gap-1 active:scale-95"
-              title="Developer sandbox tools"
-            >
-              <Wrench className="w-3.5 h-3.5" /><span>DEV TOOLS</span>
-            </button>
-          )}
         </div>
       </header>
 
@@ -614,6 +592,18 @@ export const MobileTopHUD: React.FC<MobileTopHUDProps> = ({
                     >
                       <LogOut className="w-4 h-4" />
                       <span>SURRENDER & EXIT TO MENU</span>
+                    </button>
+                  )}
+
+                  {/* Developer-only: sandbox matches or ?debug=1. No longer a button on the battlefield HUD. */}
+                  {(engine.mode === 'sandbox' || (typeof location !== 'undefined' && /[?&]debug=1/.test(location.search))) && (
+                    <button
+                      onClick={() => setActiveModal('sandbox')}
+                      data-testid="dev-tools"
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-[#141d27] border border-[#1f2e3d] text-[#A7B7C7] mt-2"
+                    >
+                      <Wrench className="w-4 h-4" />
+                      <span>DEVELOPER TOOLS</span>
                     </button>
                   )}
                 </div>
