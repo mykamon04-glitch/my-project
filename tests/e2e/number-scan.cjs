@@ -20,7 +20,7 @@ const BAD = /\d+\.\d{3,}|\bNaN\b|\bInfinity\b|\bundefined\b|\bnull\b/;
       await p.waitForTimeout(700); await scan(tab);
     }
     // select all units via the army tab and scan the selection dock
-    await p.locator('nav button').filter({ hasText: /^\s*ARMY\s*$/ }).first().click().catch(() => {});
+    await p.locator('nav button').filter({ hasText: /^\s*ARMY\s*$/i }).first().click().catch(() => {});
     await p.waitForTimeout(400);
     const all = p.getByText(/^ALL \(/).first(); if (await all.count()) { await all.click().catch(() => {}); await p.waitForTimeout(500); await scan('army-all'); }
     await ctx.close();

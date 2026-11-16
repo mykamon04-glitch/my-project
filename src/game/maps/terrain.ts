@@ -43,7 +43,8 @@ const PAL: Record<string, Palette> = {
     water: [[44, 76, 86], [86, 118, 116]], shore: [196, 178, 140], asphalt: true,
   },
   urban: {
-    ground: [[118, 118, 112], [132, 130, 122], [96, 98, 94]], rough: [[116, 108, 98], [94, 88, 80]],
+    // open lots: dusty concrete / packed earth with weedy patches; rubble; dark worn asphalt streets
+    ground: [[104, 102, 92], [118, 112, 96], [82, 88, 74]], rough: [[112, 104, 94], [86, 80, 72]],
     road: [[64, 66, 68], [96, 96, 94]], rock: [[92, 88, 84], [70, 68, 66]], forest: [70, 84, 56],
     water: [[40, 60, 70], [64, 88, 92]], shore: [120, 118, 110], asphalt: true,
   },
@@ -178,6 +179,15 @@ export class TerrainSampler {
         return c;
       }
       default: { // open ground
+        if (this.map.environment === 'urban' && noise2(wx / 90, wy / 90, s + 3) > 0.42) {
+          // concrete hardstanding: slabs with joints and stains
+          const slab = noise2(Math.floor(wx / 36), Math.floor(wy / 36), s + 4);
+          let c: RGB = mix([112, 110, 104], [128, 126, 118], slab);
+          if ((wx % 36) < 1.2 || (wy % 36) < 1.2) c = mix(c, [60, 60, 58], 0.5);
+          const stain = fbm2(wx / 30, wy / 30, s + 6, 2);
+          if (stain > 0.6) c = mix(c, [74, 72, 66], (stain - 0.6) * 1.6);
+          return c;
+        }
         const big = fbm2(wx / 700, wy / 700, s + 61, 3), mid = fbm2(wx / 190, wy / 190, s + 63, 3), fine = noise2(wx / 22, wy / 22, s + 65);
         const dry = clamp01((mid - 0.56) / 0.18), damp = clamp01((0.44 - mid) / 0.18);
         let c = mix(P.ground[0], P.ground[1], dry);

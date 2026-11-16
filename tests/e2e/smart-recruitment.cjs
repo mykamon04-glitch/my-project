@@ -8,7 +8,7 @@ const res = []; const ok = (n, p, i = '') => { res.push(p); console.log((p ? 'PA
     const p = await ctx.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
     await p.goto('http://127.0.0.1:4173/'); await p.waitForTimeout(500);
     await p.getByText('Quick Deploy').first().click(); await p.waitForTimeout(1800);
-    const nav = t => p.locator('nav button').filter({ hasText: new RegExp('^\\s*' + t + '\\s*$') }).first();
+    const nav = t => p.locator('nav button').filter({ hasText: new RegExp('^\\s*' + t + '\\s*$', 'i') }).first();
     await nav('AI').click(); await p.waitForTimeout(600);
     const card = p.getByTestId('smart-recruitment');
     ok(`${w}x${h} card visible`, await card.isVisible());

@@ -14,6 +14,7 @@ import { CareerOverlay, DEFAULT_SETUP, MainMenuScreen, MapSelectScreen, MatchSet
 import { ConfirmDialog, HelpOverlay, PauseMenu } from './components/nav/NavUI';
 import { initialNav, navReducer, shouldPause, topOverlay } from './game/navigation';
 import { latestSaveSlot, writeSaveSlot } from './components/SaveLoadModal';
+import { playerSettings } from './game/settingsStore';
 import { CAMPAIGN_MISSIONS } from './data/gameData';
 import { SaveLoadModal } from './components/SaveLoadModal';
 import { SettingsModal } from './components/SettingsModal';
@@ -102,6 +103,8 @@ export default function App() {
     boxStartWorld?: Vector2;
   } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
+  // V13: long-press on a friendly unit opens its contextual options
+  const [unitContext, setUnitContext] = useState<{ x: number; y: number; unitId: string } | null>(null);
   const isBoxSelectingRef = useRef<boolean>(false);
   const lastTapTimeRef = useRef<number>(0);
   const lastTapPosRef = useRef<Vector2>({ x: 0, y: 0 });
@@ -1348,6 +1351,22 @@ export default function App() {
       const startY = t.clientY;
       longPressTimerRef.current = window.setTimeout(() => {
         if (touchStartRef.current && !touchStartRef.current.isPan) {
+          // Long-press on a friendly unit: contextual options. On empty ground: drag-box selection (below).
+          const eng = engineRef.current;
+          const w0 = screenToWorld(startX, startY);
+          const hit = eng ? pickUnit(eng.units, w0, Math.max(30, 30 / cameraRef.current.zoom), 'player') : undefined;
+          if (hit && eng && !eng.matchEnd) {
+            (touchStartRef.current as { contextOpened?: boolean }).contextOpened = true;
+            if (!selectedUnitIdsRef.current.includes(hit.id)) {
+              eng.units.forEach(u => (u.selected = u.id === hit.id));
+              selectedUnitIdsRef.current = [hit.id];
+              setSelectedUnitIds([hit.id]);
+              setSelectedBuildingId(null);
+            }
+            setUnitContext({ x: startX, y: startY, unitId: hit.id });
+            soundEngine.playSelectUnit();
+            return;
+          }
           isBoxSelectingRef.current = true;
           const startWorld = screenToWorld(startX, startY);
           if (touchStartRef.current) {
@@ -1429,6 +1448,7 @@ export default function App() {
     }
 
     if (!touchStartRef.current) return;
+    if ((touchStartRef.current as { contextOpened?: boolean }).contextOpened) { touchStartRef.current = null; return; } // the long-press opened unit options
 
     const engine = engineRef.current;
 
@@ -1647,8 +1667,10 @@ export default function App() {
     ? engine.buildings.find(b => b.id === selectedBuildingId && b.hp > 0) || null
     : null;
 
+  // V13: honour the player's reduced-motion setting (the OS preference is handled in CSS)
+  const reduceMotion = !!(engineRef.current?.settings ?? playerSettings()).reducedMotion;
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-slate-950 font-sans select-none">
+    <div className={`relative w-screen h-screen overflow-hidden bg-nx-bg font-sans select-none ${reduceMotion ? 'reduce-motion' : ''}`}>
       {inMainMenu ? (
         nav.screen === 'map_select' ? (
           <MapSelectScreen setup={setup} onChange={setSetup} onBack={() => dispatchNav({ type: 'back' })} onHome={requestHome}
@@ -2042,6 +2064,41 @@ export default function App() {
               <span className="text-slate-100">VIEW RESULTS</span>
             </button>
           )}
+
+          {/* V13: long-press unit options */}
+          {unitContext && engine && (() => {
+            const u = engine.units.find(o => o.id === unitContext.unitId && o.hp > 0);
+            if (!u) return null;
+            const cfg = UNIT_CONFIGS[u.type];
+            const ids = selectedUnitIdsRef.current.length ? selectedUnitIdsRef.current : [u.id];
+            const close = () => setUnitContext(null);
+            const act = (fn: () => void) => () => { fn(); soundEngine.playCommandAffirmative(); close(); };
+            const items: [string, () => void][] = [
+              [`Select all ${cfg.name}`, () => {
+                const same = engine.units.filter(o => o.faction === 'player' && o.hp > 0 && o.type === u.type).map(o => o.id);
+                engine.units.forEach(o => (o.selected = same.includes(o.id)));
+                selectedUnitIdsRef.current = same; setSelectedUnitIds(same); close();
+              }],
+              ['Focus camera', () => { targetCameraRef.current.x = u.x; targetCameraRef.current.y = u.y; close(); }],
+              ['Hold position', act(() => engine.issueHold(ids))],
+              ['Stop', act(() => engine.issueStop(ids))],
+            ];
+            if (cfg.canHeal || u.type === 'medic' || u.type === 'medical_apc') items.push(['Heal nearby troops', act(() => engine.issueHeal(ids))]);
+            if (u.type === 'engineer') items.push(['Repair nearby', act(() => engine.issueRepair(ids))]);
+            const left = Math.min(Math.max(8, unitContext.x - 90), window.innerWidth - 196);
+            const top = Math.min(Math.max(70, unitContext.y - 20), window.innerHeight - 60 - items.length * 40);
+            return (
+              <>
+                <div className="fixed inset-0 z-40" onClick={close} onTouchStart={close} />
+                <div className="nx-panel nx-drop fixed z-50 w-[188px] p-1" style={{ left, top }} data-testid="unit-context" role="menu">
+                  <div className="px-2.5 py-1.5 text-[11px] font-semibold text-nx-text2">{cfg.name} · {Math.round(u.hp)}/{Math.round(u.maxHp)}</div>
+                  {items.map(([label, fn]) => (
+                    <button key={label} onClick={fn} role="menuitem" className="flex h-10 w-full items-center rounded-md px-2.5 text-left text-[13px] text-nx-text hover:bg-white/5 active:bg-white/10">{label}</button>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
 
           {/* GAME MODAL (Victory, Defeat, Briefing, Settings) */}
           {engine && (

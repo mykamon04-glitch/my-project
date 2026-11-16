@@ -6,7 +6,7 @@ const res = []; const ok = (n, p, i = '') => { res.push(p); console.log((p ? 'PA
   const p = await ctx.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message));
   await p.goto('http://127.0.0.1:4173/'); await p.waitForTimeout(700);
   await p.getByText('Quick Deploy').first().click(); await p.waitForTimeout(1800);
-  const nav = t => p.locator('nav button').filter({ hasText: new RegExp('^\\s*' + t + '\\s*$') }).first();
+  const nav = t => p.locator('nav button').filter({ hasText: new RegExp('^\\s*' + t + '\\s*$', 'i') }).first();
   const sheet = p.getByTestId('bottom-sheet');
   const hudBottom = () => p.evaluate(() => document.querySelector('header').getBoundingClientRect().bottom);
   const navTop = () => p.evaluate(() => document.querySelector('nav').getBoundingClientRect().top);

@@ -10,8 +10,8 @@ const res = []; const ok = (n, p, i = '') => { res.push(p); console.log((p ? 'PA
     await p.getByText('Quick Deploy').first().click(); await p.waitForTimeout(1800);
     const credits = async () => { const t = await p.locator('header button').filter({ hasText: /\$/ }).first().innerText(); return parseFloat(t.match(/\$([\d,.]+)/)[1].replace(/,/g, '')); };
     const c0 = await credits();
-    await p.locator('nav button').filter({ hasText: /^\s*BUILD\s*$/ }).first().click(); await p.waitForTimeout(400);
-    await p.getByRole('button', { name: /DEPLOY/ }).first().click(); await p.waitForTimeout(600);
+    await p.locator('nav button').filter({ hasText: /^\s*BUILD\s*$/i }).first().click(); await p.waitForTimeout(400);
+    await p.getByTestId('build-action').first().click(); await p.waitForTimeout(600);
     for (const name of [/CONFIRM/i, /ROTATE/i, /CANCEL/i]) {
       const el = p.getByRole('button', { name }).first();
       const bb = await el.boundingBox();

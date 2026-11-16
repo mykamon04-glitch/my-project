@@ -492,11 +492,17 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
     }
   };
 
+  // V13: what the current selection can do
+  const selectionArmed = selectedUnits.some(u => (UNIT_CONFIGS[u.type]?.damage ?? 0) > 0);
+  const selectionHeals = selectedUnits.some(u => UNIT_CONFIGS[u.type]?.canHeal || u.type === 'medic' || u.type === 'medical_apc');
+  const selectionRepairs = selectedUnits.some(u => u.type === 'engineer');
+
   // Recruit-able unit list
   const allUnitTypes = Object.keys(UNIT_CONFIGS) as UnitType[];
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30 pointer-events-auto select-none">
+      {/* selection capabilities decide which commands are offered (V13 context-sensitive commands) */}
       {/* 1. SELECTED UNITS COMMAND DOCK (V12): compact by default (count + MOVE | ATTACK | DEFEND | MORE);
           MORE expands filters, formation and secondary orders in place. */}
       {selectedUnits.length > 0 && (
@@ -542,6 +548,8 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
               <div className="grid grid-cols-4 gap-1">
                 {([
                   ['Stop', 'stop', 'text-[#A8B6C2]'], ['Patrol', 'patrol', 'text-[#4B91B5]'], ['Hold', 'hold', 'text-[#E6EDF3]'], ['Retreat', 'retreat', 'text-[#E5A93D]'],
+                  ...(selectionHeals ? [['Heal', 'heal', 'text-[#43C9A3]']] : []),
+                  ...(selectionRepairs ? [['Repair', 'repair', 'text-[#E6B65C]']] : []),
                 ] as [string, string, string][]).map(([label, cmd, tone]) => (
                   <button key={cmd} onClick={() => { triggerHaptic(); onIssueUnitCommandType(cmd as Parameters<typeof onIssueUnitCommandType>[0]); if (cmd !== 'patrol') setShowSecondaryUnitActions(false); }}
                     className={`h-7 rounded-md text-[10.5px] font-bold bg-[#16222F] border border-[#253446] active:scale-95 ${tone}`}>
@@ -582,10 +590,14 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
               ['defend', 'DEFEND', 'DEFEND_TARGET', '#4B91B5', <Shield key="i" className="w-3.5 h-3.5" />],
             ] as [string, string, string, string, React.ReactNode][]).map(([cmd, label, mode, color, icon]) => {
               const on = activeInteractionMode === mode;
+              // context: an all-unarmed selection (medics, transports) cannot attack, so ATTACK is disabled, not shown active
+              const disabled = cmd === 'attack' && !selectionArmed;
               return (
-                <button key={cmd} data-testid={`cmd-${cmd}`} onClick={() => { triggerHaptic(); onIssueUnitCommandType(cmd as Parameters<typeof onIssueUnitCommandType>[0]); }}
-                  className="h-9 rounded-lg flex items-center justify-center gap-1 font-display font-bold text-[11px] tracking-wider border transition-all active:scale-95"
-                  style={on ? { background: color, color: '#0B1218', borderColor: color } : { background: '#16222F', color, borderColor: color + '66' }}>
+                <button key={cmd} data-testid={`cmd-${cmd}`} disabled={disabled} aria-disabled={disabled}
+                  title={disabled ? 'The selected units are unarmed' : undefined}
+                  onClick={() => { triggerHaptic(); onIssueUnitCommandType(cmd as Parameters<typeof onIssueUnitCommandType>[0]); }}
+                  className="h-9 rounded-lg flex items-center justify-center gap-1 font-semibold text-[12px] tracking-wide border transition-colors duration-100 active:scale-[0.97] disabled:opacity-35 disabled:pointer-events-none"
+                  style={on ? { background: color, color: '#0B1218', borderColor: color } : { background: '#16222F', color, borderColor: color + '55' }}>
                   {icon}<span>{label}</span>
                 </button>
               );
@@ -616,7 +628,7 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
               ? { height: fullPx, transition: 'height 220ms cubic-bezier(.2,.8,.2,1)' }
               : { maxHeight: halfPx, transition: 'max-height 220ms cubic-bezier(.2,.8,.2,1)' }
           }
-          className="mx-auto w-[min(calc(100vw-8px),640px)] mb-1 bg-[#131F2D]/95 backdrop-blur-md border border-[#2a3b4f] rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-200 flex flex-col"
+          className="nx-panel nx-rise mx-auto w-[min(calc(100vw-8px),640px)] mb-1 overflow-hidden flex flex-col"
         >
           {/* Drag handle: drag to resize, release to snap; tap toggles half/expanded */}
           <div
@@ -626,25 +638,27 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
             onPointerMove={onHandleMove}
             onPointerUp={onHandleUp}
             onPointerCancel={onHandleUp}
-            className="h-6 shrink-0 flex items-center justify-center cursor-grab touch-none bg-[#16212c]"
+            className="h-5 shrink-0 flex items-center justify-center cursor-grab touch-none"
           >
-            <span className="w-10 h-1.5 rounded-full bg-[#3a4d63]" />
+            <span className="w-9 h-1 rounded-full bg-nx-border" />
           </div>
           {/* Drawer Top Header Bar */}
-          <div className="flex items-center justify-between px-3 py-2 border-b border-[#1B2730] bg-[#16212c]">
+          <div className="flex items-center justify-between px-3 pb-2 border-b border-nx-border">
             <div className="flex items-center gap-2">
-              {activeTab === 'build' && <Hammer className="w-4 h-4 text-[#2FB68A]" />}
-              {activeTab === 'army' && <Users className="w-4 h-4 text-[#2FB68A]" />}
-              {activeTab === 'defense' && <Shield className="w-4 h-4 text-[#2FB68A]" />}
-              {activeTab === 'ai' && <Brain className="w-4 h-4 text-[#2FB68A]" />}
-              <span className="font-display font-bold text-sm tracking-wide uppercase text-[#F1F5F7]">
-                {activeTab === 'build' ? 'CONSTRUCTION CATALOG' : activeTab === 'army' ? 'MILITARY FORCES' : activeTab === 'defense' ? 'DEFENSIVE STRUCTURES' : 'TACTICAL AI COMMAND'}
+              {activeTab === 'build' && <Hammer className="w-4 h-4 text-nx-accent" />}
+              {activeTab === 'army' && <Users className="w-4 h-4 text-nx-accent" />}
+              {activeTab === 'defense' && <Shield className="w-4 h-4 text-nx-accent" />}
+              {activeTab === 'ai' && <Brain className="w-4 h-4 text-nx-accent" />}
+              <span className="nx-title !text-[14px]">
+                {activeTab === 'build' ? 'Build' : activeTab === 'army' ? 'Army' : activeTab === 'defense' ? 'Defense' : 'AI command'}
               </span>
             </div>
 
             <button
               onClick={() => setSheetSnap('collapsed')}
-              className="p-1 rounded-lg text-[#A8B6C2] hover:text-[#F1F5F7] hover:bg-[#1B2730]"
+              className="nx-btn nx-btn-ghost nx-icon-btn !min-h-[32px] !min-w-[32px]"
+              aria-label="Close panel"
+              data-testid="sheet-close"
             >
               <X className="w-4 h-4" />
             </button>
@@ -656,15 +670,15 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
             {activeTab === 'build' && (
               <div className="space-y-2">
                 {/* Categories Tab Strip */}
-                <div className="grid grid-cols-3 min-[520px]:grid-cols-6 gap-1 text-[10px] font-bold">
+                <div className="grid grid-cols-3 min-[520px]:grid-cols-6 gap-1 rounded-lg border border-nx-border p-1">
                   {(
                     [
-                      { id: 'economy', label: 'ECONOMY' },
-                      { id: 'power', label: 'POWER' },
-                      { id: 'military', label: 'MILITARY' },
-                      { id: 'defense', label: 'DEFENSE' },
-                      { id: 'technology', label: 'TECH' },
-                      { id: 'infrastructure', label: 'INFRA' },
+                      { id: 'economy', label: 'Economy' },
+                      { id: 'power', label: 'Power' },
+                      { id: 'military', label: 'Military' },
+                      { id: 'defense', label: 'Defense' },
+                      { id: 'technology', label: 'Tech' },
+                      { id: 'infrastructure', label: 'Support' },
                     ] as { id: BuildCategory; label: string }[]
                   ).map(cat => (
                     <button
@@ -674,10 +688,10 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
                         setBuildCategory(cat.id);
                       }}
                       title={cat.id}
-                      className={`px-1 h-9 rounded-xl uppercase truncate transition-all ${
+                      className={`px-1 h-8 rounded-md truncate text-[12px] font-semibold transition-colors duration-150 ${
                         buildCategory === cat.id
-                          ? 'bg-[#2FB68A] text-[#101820] font-bold shadow-md shadow-[#2FB68A]/20'
-                          : 'bg-[#1B2730] text-[#A8B6C2] hover:text-white'
+                          ? 'bg-nx-surface2 text-nx-text ring-1 ring-nx-accent/60'
+                          : 'text-nx-text2 hover:text-nx-text'
                       }`}
                     >
                       {cat.label}
@@ -695,22 +709,20 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
                     return (
                       <div
                         key={type}
-                        className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 transition-all ${
-                          canAfford
-                            ? 'bg-[#1B2730] border-[#2c3e50] hover:border-[#2FB68A]/60'
-                            : 'bg-[#101820] border-[#1B2730] opacity-60'
+                        className={`p-2 rounded-lg border flex items-center justify-between gap-2 transition-colors duration-150 ${
+                          canAfford ? 'bg-nx-surface2/60 border-nx-border hover:border-nx-accent/50' : 'bg-transparent border-nx-border/60 opacity-55'
                         }`}
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="w-12 h-12 rounded-xl bg-[#101820] border border-[#2c3e50] flex items-center justify-center shrink-0">
+                          <div className="w-11 h-11 rounded-md bg-nx-bg border border-nx-border flex items-center justify-center shrink-0">
                             {renderBuildingThumbnail(type)}
                           </div>
                           <div className="min-w-0">
-                            <span className="font-display font-bold text-xs text-[#F1F5F7] block leading-tight break-words">
+                            <span className="text-[13px] font-semibold text-nx-text block leading-tight break-words">
                               {cfg.name}
                             </span>
-                            <div className="flex items-center gap-2 text-[10px] mt-0.5">
-                              <span className="text-[#E5A93D] font-bold">${cfg.cost}</span>
+                            <div className="flex items-center gap-2 text-[11px] mt-0.5 nx-num">
+                              <span className="text-nx-text">${cfg.cost}</span>
                               <span
                                 className={`font-bold ${
                                   powerDelta >= 0 ? 'text-[#2FB68A]' : 'text-[#E5A93D]'
@@ -731,14 +743,11 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
                             setSheetSnap('collapsed');
                           }}
                           disabled={!canAfford}
-                          className={`px-3 py-2 rounded-xl font-display font-bold text-xs uppercase flex items-center gap-1 shrink-0 transition-transform active:scale-95 ${
-                            canAfford
-                              ? 'bg-[#2FB68A] text-[#101820] hover:bg-[#38c999] shadow-md shadow-[#2FB68A]/25'
-                              : 'bg-[#101820] text-[#A8B6C2]/40 border border-[#2c3e50]/40 cursor-not-allowed'
-                          }`}
+                          data-testid="build-action"
+                          className={`nx-btn !min-h-[36px] !px-3 text-[12px] shrink-0 ${canAfford ? 'nx-btn-primary' : ''}`}
                         >
                           <Hammer className="w-3.5 h-3.5" />
-                          <span>DEPLOY</span>
+                          <span>Build</span>
                         </button>
                       </div>
                     );
@@ -1003,13 +1012,10 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
                             setSheetSnap('collapsed');
                           }}
                           disabled={!canAfford}
-                          className={`px-3 py-1.5 rounded-xl font-display font-bold text-xs ${
-                            canAfford
-                              ? 'bg-[#2FB68A] text-[#101820] hover:bg-[#38c999] active:scale-95'
-                              : 'bg-[#101820] text-[#A8B6C2]/40 cursor-not-allowed'
-                          }`}
+                          data-testid="build-action"
+                          className={`nx-btn !min-h-[36px] !px-3 text-[12px] shrink-0 ${canAfford ? 'nx-btn-primary' : ''}`}
                         >
-                          DEPLOY
+                          <Hammer className="w-3.5 h-3.5" /> Build
                         </button>
                       </div>
                     );
@@ -1033,68 +1039,68 @@ export const MobileBottomSheet: React.FC<MobileBottomSheetProps> = ({
       {/* 3. PERMANENT 5-BUTTON MOBILE RTS DOCK (BUILD | ARMY | DEFENSE | AI | MENU) */}
       <nav
         aria-label="Tactical Command Bar"
-        className="bg-[#0C141D]/96 backdrop-blur-md border-t border-[#1B2730] pb-safe px-2 py-1" data-testid="bottom-nav"
+        className="bg-nx-bg/95 backdrop-blur-md border-t border-nx-border pb-safe px-2 pt-0.5" data-testid="bottom-nav"
       >
         <div className="max-w-xl mx-auto grid grid-cols-5 gap-1">
           {/* BUILD */}
           <button
             onClick={e => handleTabClick('build', e)}
-            className={`flex flex-col items-center justify-center gap-0.5 h-11 rounded-lg transition-all duration-150 min-h-[44px] ${
+            className={`relative flex flex-col items-center justify-center gap-0.5 h-12 rounded-md transition-colors duration-150 min-h-[44px] ${
               activeTab === 'build' && sheetSnap !== 'collapsed'
-                ? 'bg-[#2FB68A]/20 text-[#2FB68A] border border-[#2FB68A]/60 shadow-lg shadow-[#2FB68A]/15'
-                : 'text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]'
+                ? 'text-nx-accent nx-tab-active'
+                : 'text-nx-text2 hover:text-nx-text active:bg-white/5'
             }`}
           >
             <Hammer className="w-4 h-4 stroke-[2.2]" />
-            <span className="text-[10px] font-display font-bold tracking-wider">BUILD</span>
+            <span className="text-[11px] font-semibold">Build</span>
           </button>
 
           {/* ARMY */}
           <button
             onClick={e => handleTabClick('army', e)}
-            className={`flex flex-col items-center justify-center gap-0.5 h-11 rounded-lg transition-all duration-150 min-h-[44px] ${
+            className={`relative flex flex-col items-center justify-center gap-0.5 h-12 rounded-md transition-colors duration-150 min-h-[44px] ${
               activeTab === 'army' && sheetSnap !== 'collapsed'
-                ? 'bg-[#2FB68A]/20 text-[#2FB68A] border border-[#2FB68A]/60 shadow-lg shadow-[#2FB68A]/15'
-                : 'text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]'
+                ? 'text-nx-accent nx-tab-active'
+                : 'text-nx-text2 hover:text-nx-text active:bg-white/5'
             }`}
           >
             <Users className="w-4 h-4 stroke-[2.2]" />
-            <span className="text-[10px] font-display font-bold tracking-wider">ARMY</span>
+            <span className="text-[11px] font-semibold">Army</span>
           </button>
 
           {/* DEFENSE */}
           <button
             onClick={e => handleTabClick('defense', e)}
-            className={`flex flex-col items-center justify-center gap-0.5 h-11 rounded-lg transition-all duration-150 min-h-[44px] ${
+            className={`relative flex flex-col items-center justify-center gap-0.5 h-12 rounded-md transition-colors duration-150 min-h-[44px] ${
               activeTab === 'defense' && sheetSnap !== 'collapsed'
-                ? 'bg-[#2FB68A]/20 text-[#2FB68A] border border-[#2FB68A]/60 shadow-lg shadow-[#2FB68A]/15'
-                : 'text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]'
+                ? 'text-nx-accent nx-tab-active'
+                : 'text-nx-text2 hover:text-nx-text active:bg-white/5'
             }`}
           >
             <Shield className="w-4 h-4 stroke-[2.2]" />
-            <span className="text-[10px] font-display font-bold tracking-wider">DEFENSE</span>
+            <span className="text-[11px] font-semibold">Defense</span>
           </button>
 
           {/* AI */}
           <button
             onClick={e => handleTabClick('ai', e)}
-            className={`flex flex-col items-center justify-center gap-0.5 h-11 rounded-lg transition-all duration-150 min-h-[44px] ${
+            className={`relative flex flex-col items-center justify-center gap-0.5 h-12 rounded-md transition-colors duration-150 min-h-[44px] ${
               activeTab === 'ai' && sheetSnap !== 'collapsed'
-                ? 'bg-[#2FB68A]/20 text-[#2FB68A] border border-[#2FB68A]/60 shadow-lg shadow-[#2FB68A]/15'
-                : 'text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]'
+                ? 'text-nx-accent nx-tab-active'
+                : 'text-nx-text2 hover:text-nx-text active:bg-white/5'
             }`}
           >
             <Brain className="w-4 h-4 stroke-[2.2]" />
-            <span className="text-[10px] font-display font-bold tracking-wider">AI</span>
+            <span className="text-[11px] font-semibold">AI</span>
           </button>
 
           {/* MENU */}
           <button
             onClick={e => handleTabClick('menu', e)}
-            className="flex flex-col items-center justify-center gap-0.5 h-11 rounded-lg transition-all duration-150 min-h-[44px] text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]"
+            className="relative flex flex-col items-center justify-center gap-0.5 h-12 rounded-md transition-colors duration-150 min-h-[44px] text-[#A8B6C2] hover:text-[#F1F5F7] active:bg-[#1B2730]"
           >
             <MenuIcon className="w-4 h-4 stroke-[2.2]" />
-            <span className="text-[10px] font-display font-bold tracking-wider">MORE</span>
+            <span className="text-[11px] font-semibold">More</span>
           </button>
         </div>
       </nav>

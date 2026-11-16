@@ -299,7 +299,7 @@ export class TacticalRenderer {
     if (mapData.environment) {
       const view = { x0: camera.x - halfW - 8, y0: camera.y - halfH - 8, x1: camera.x + halfW + 8, y1: camera.y + halfH + 8 };
       this.warmFrames++;
-      this.terrain.draw(ctx, mapData, view, settings?.graphicsQuality ?? 'ultra', this.warmFrames < 30 ? 14 : 5);
+      this.terrain.draw(ctx, mapData, view, settings?.graphicsQuality ?? 'ultra', this.warmFrames < 90 ? 16 : 6);
       return;
     }
     const minX = Math.floor((camera.x - halfW) / ts) - 1;

@@ -63,16 +63,12 @@ export class TerrainLayer {
     this.setup(map, texel);
     if (!this.overview) this.buildOverview();
     const ov = this.overview!;
-    // overview, only the visible part
-    const ox0 = Math.max(-APRON, view.x0), oy0 = Math.max(-APRON, view.y0);
-    const ox1 = Math.min(map.width * map.tileSize + APRON, view.x1), oy1 = Math.min(map.height * map.tileSize + APRON, view.y1);
-    if (ox1 > ox0 && oy1 > oy0) {
-      ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(ov, (ox0 + APRON) / OVERVIEW_TEXEL, (oy0 + APRON) / OVERVIEW_TEXEL, (ox1 - ox0) / OVERVIEW_TEXEL, (oy1 - oy0) / OVERVIEW_TEXEL, ox0, oy0, ox1 - ox0, oy1 - oy0);
-    }
-    // detail chunks (visible ones, nearest the view centre first)
-    const cx0 = Math.floor(Math.max(-APRON, view.x0) / CHUNK), cx1 = Math.floor((Math.min(map.width * map.tileSize + APRON, view.x1) - 1) / CHUNK);
-    const cy0 = Math.floor(Math.max(-APRON, view.y0) / CHUNK), cy1 = Math.floor((Math.min(map.height * map.tileSize + APRON, view.y1) - 1) / CHUNK);
+    ctx.imageSmoothingEnabled = true;
+    // Visible chunks, nearest the view centre first. Each chunk is drawn once: the baked detail if ready, otherwise the
+    // matching part of the overview (no full-screen overview underneath, so no overdraw).
+    const W = map.width * map.tileSize, H = map.height * map.tileSize;
+    const cx0 = Math.floor(Math.max(-APRON, view.x0) / CHUNK), cx1 = Math.floor((Math.min(W + APRON, view.x1) - 1) / CHUNK);
+    const cy0 = Math.floor(Math.max(-APRON, view.y0) / CHUNK), cy1 = Math.floor((Math.min(H + APRON, view.y1) - 1) / CHUNK);
     const mx = (cx0 + cx1) / 2, my = (cy0 + cy1) / 2;
     const order: [number, number][] = [];
     for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) order.push([cx, cy]);
@@ -83,15 +79,20 @@ export class TerrainLayer {
     for (const [cx, cy] of order) {
       const k = this.key(cx, cy);
       let c = this.chunks.get(k);
-      if (!c) {
-        if (performance.now() - t0 > budgetMs) { complete = false; continue; }
-        const s = performance.now();
+      if (!c && performance.now() - t0 <= budgetMs) {
+        const s0 = performance.now();
         c = this.canvasFrom(bakeTerrain(this.sampler!, cx * CHUNK, cy * CHUNK, CHUNK, CHUNK, texel), n, n);
-        this.stats.baked++; this.stats.ms += performance.now() - s;
+        this.stats.baked++; this.stats.ms += performance.now() - s0;
         this.chunks.set(k, c);
-      } else { this.chunks.delete(k); this.chunks.set(k, c); }
-      // +0.5 px overlap hides seams at fractional zoom
-      ctx.drawImage(c, cx * CHUNK, cy * CHUNK, CHUNK + 0.5, CHUNK + 0.5);
+      } else if (c) { this.chunks.delete(k); this.chunks.set(k, c); }
+      if (c) {
+        // +0.5 px overlap hides seams at fractional zoom
+        ctx.drawImage(c, cx * CHUNK, cy * CHUNK, CHUNK + 0.5, CHUNK + 0.5);
+      } else {
+        complete = false;
+        const ox = cx * CHUNK + APRON, oy = cy * CHUNK + APRON;
+        ctx.drawImage(ov, ox / OVERVIEW_TEXEL, oy / OVERVIEW_TEXEL, CHUNK / OVERVIEW_TEXEL, CHUNK / OVERVIEW_TEXEL, cx * CHUNK, cy * CHUNK, CHUNK + 0.5, CHUNK + 0.5);
+      }
     }
     const cap = Math.max(420, order.length + 40);
     while (this.chunks.size > cap) this.chunks.delete(this.chunks.keys().next().value as number);

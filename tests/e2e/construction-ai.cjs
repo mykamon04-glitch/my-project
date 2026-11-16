@@ -10,7 +10,7 @@ const res = []; const ok = (n, p, i = '') => { res.push(p); console.log((p ? 'PA
     await p.goto('http://127.0.0.1:4173/'); await p.waitForTimeout(500);
     await p.getByText('TESTING SANDBOX', { exact: false }).first().click().catch(() => {});
     await p.getByText('Quick Deploy').first().click(); await p.waitForTimeout(2000);
-    const nav = t => p.locator('nav button').filter({ hasText: new RegExp('^\\s*' + t + '\\s*$') }).first();
+    const nav = t => p.locator('nav button').filter({ hasText: new RegExp('^\\s*' + t + '\\s*$', 'i') }).first();
     await nav('AI').click(); await p.waitForTimeout(600);
     const panel = p.getByTestId('construction-ai');
     ok(`${tag} panel visible`, await panel.isVisible());

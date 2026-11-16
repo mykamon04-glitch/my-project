@@ -14,7 +14,7 @@ const results = []; const ok = (name, pass, info = '') => { results.push({ name,
     const m = t.match(/\$([\d,.]+)(K|M)?/); if (!m) return NaN;
     let v = parseFloat(m[1].replace(/,/g, '')); if (m[2] === 'K') v *= 1000; if (m[2] === 'M') v *= 1e6; return v;
   };
-  const nav = t => p.locator('nav button').filter({ hasText: new RegExp('^\\s*' + t + '\\s*$') }).first();
+  const nav = t => p.locator('nav button').filter({ hasText: new RegExp('^\\s*' + t + '\\s*$', 'i') }).first();
 
   // 1. HUD shows no horizontal overflow
   const overflow = await p.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth }));
@@ -23,7 +23,7 @@ const results = []; const ok = (name, pass, info = '') => { results.push({ name,
   // 2. Construction: deploy -> placement controls -> confirm -> credits drop
   const c0 = await credits();
   await nav('BUILD').click(); await p.waitForTimeout(500);
-  await p.getByRole('button', { name: /DEPLOY/ }).first().click(); await p.waitForTimeout(700);
+  await p.getByTestId('build-action').first().click(); await p.waitForTimeout(700);
   const confirm = p.getByRole('button', { name: /CONFIRM/i }).first();
   const confirmVisible = await confirm.isVisible().catch(() => false);
   ok('placement shows CONFIRM button', confirmVisible);
@@ -60,7 +60,7 @@ const results = []; const ok = (name, pass, info = '') => { results.push({ name,
 
   // 5. Defense list and MORE (settings)
   await nav('DEFENSE').click(); await p.waitForTimeout(500);
-  ok('defense panel lists deployable structures', (await p.getByRole('button', { name: /DEPLOY/ }).count()) > 0);
+  ok('defense panel lists deployable structures', (await p.getByTestId('build-action').count()) > 0);
   await nav('MORE').click(); await p.waitForTimeout(700);
   ok('MORE opens settings', /GRAPHICS|OPERATIONS/i.test(await p.locator('body').innerText()));
 

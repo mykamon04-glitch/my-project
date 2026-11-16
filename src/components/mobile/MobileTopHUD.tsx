@@ -72,15 +72,15 @@ interface MobileTopHUDProps {
 }
 
 
-const CHIP_TONES = {
-  ok: 'border-[#22C99A]/35 text-[#22C99A]',
-  info: 'border-[#39B8F2]/35 text-[#39B8F2]',
-  warn: 'border-[#F0B84B]/40 text-[#F0B84B]',
-  danger: 'border-[#F06470]/70 bg-[#F06470]/15 text-[#F06470]',
+/* V13 command strip: one integrated bar, values separated by hairlines. Colour only where it carries meaning:
+   neutral by default, amber for a shortage, red for a critical threat; positive income is a subtle green sub-label. */
+const TONE = {
+  neutral: 'text-nx-text',
+  warn: 'text-nx-warn',
+  danger: 'text-nx-danger',
 } as const;
 
-/** One resource chip: icon + value + sub-caption. min-w-0 lets it shrink instead of overflowing. */
-const HudChip: React.FC<{ tone: keyof typeof CHIP_TONES; icon: React.ReactNode; value: React.ReactNode; sub: string; title: string; onClick: () => void; onLongPress?: () => void }> = ({ tone, icon, value, sub, title, onClick, onLongPress }) => {
+const HudChip: React.FC<{ tone: keyof typeof TONE; icon: React.ReactNode; value: React.ReactNode; sub: React.ReactNode; title: string; onClick: () => void; onLongPress?: () => void; testId?: string }> = ({ tone, icon, value, sub, title, onClick, onLongPress, testId }) => {
   const timer = React.useRef<number | null>(null);
   const fired = React.useRef(false);
   const clear = () => { if (timer.current !== null) { window.clearTimeout(timer.current); timer.current = null; } };
@@ -93,16 +93,18 @@ const HudChip: React.FC<{ tone: keyof typeof CHIP_TONES; icon: React.ReactNode; 
     onPointerCancel={onLongPress ? clear : undefined}
     onContextMenu={onLongPress ? ev => ev.preventDefault() : undefined}
     title={title}
-    className={`flex-1 min-w-0 h-8 flex items-center justify-center gap-1 px-1 rounded-lg border bg-[#16222F] active:scale-95 transition-all ${CHIP_TONES[tone]}`}
+    data-testid={testId}
+    className={`relative flex-1 min-w-0 h-9 flex items-center justify-center gap-1.5 px-1.5 rounded-md transition-colors duration-100 hover:bg-white/5 active:bg-white/10 ${TONE[tone]}`}
   >
-    <span className="hidden min-[360px]:block">{icon}</span>
+    <span className="hidden min-[360px]:block opacity-80">{icon}</span>
     <span className="min-w-0 flex flex-col items-start leading-none">
-      <span className="truncate max-w-full text-[11.5px] font-bold tabular-nums text-[#F1F5F9]">{value}</span>
-      <span className="truncate max-w-full text-[8.5px] mt-[2px] tabular-nums text-[#9FB0C0] uppercase tracking-wide">{sub}</span>
+      <span className={`truncate max-w-full text-[13px] font-semibold nx-num ${tone === 'neutral' ? 'text-nx-text' : ''}`}>{value}</span>
+      <span className="truncate max-w-full text-[9.5px] mt-[3px] text-nx-text2">{sub}</span>
     </span>
   </button>
   );
 };
+const Sep = () => <span className="my-2 w-px shrink-0 bg-nx-border" aria-hidden />;
 
 type DetailModalType = 'credits' | 'power' | 'pop' | 'alert' | 'menu' | 'sandbox' | null;
 
@@ -178,55 +180,63 @@ export const MobileTopHUD: React.FC<MobileTopHUDProps> = ({
           paddingRight: 'max(6px, env(safe-area-inset-right, 6px))',
         }}
       >
-        <div className="pointer-events-auto mx-auto w-full max-w-3xl flex items-stretch gap-1 rounded-xl border border-[#253446] bg-[#0F1924]/92 backdrop-blur-md p-1 shadow-lg">
+        <div className="nx-panel pointer-events-auto mx-auto flex w-full max-w-2xl items-stretch !rounded-xl px-0.5" data-testid="command-strip">
           <HudChip
-            tone="warn"
-            title="Credits and income - tap for economy breakdown"
+            tone="neutral"
+            testId="hud-credits"
+            title="Credits and income - tap for economy details"
             onClick={() => setActiveModal(activeModal === 'credits' ? null : 'credits')}
-            icon={<Coins className="w-3.5 h-3.5 shrink-0" />}
+            icon={<Coins className="w-3.5 h-3.5 shrink-0 text-nx-warn" />}
             value={`$${formatCompact(econ.credits)}`}
-            sub={`${formatSigned(econ.incomeRate)}/m`}
+            sub={<span className={econ.incomeRate > 0 ? 'text-nx-accent' : econ.incomeRate < 0 ? 'text-nx-danger' : ''}>{formatSigned(econ.incomeRate)}/min</span>}
           />
+          <Sep />
           <HudChip
-            tone={isPowerDeficit ? 'danger' : 'info'}
-            title="Power: consumed / available - tap for diagnostics"
+            tone={isPowerDeficit ? 'warn' : 'neutral'}
+            testId="hud-power"
+            title="Power: used / available - tap for details"
             onClick={() => setActiveModal(activeModal === 'power' ? null : 'power')}
             icon={<Zap className="w-3.5 h-3.5 shrink-0" />}
             value={`${formatCompact(econ.powerDemand)}/${formatCompact(econ.powerSupply)}`}
-            sub={isPowerDeficit ? 'LOW POWER' : 'power'}
+            sub={isPowerDeficit ? 'Low power' : 'Power'}
           />
+          <Sep />
           <HudChip
-            tone={isPopCapped ? 'warn' : 'ok'}
+            tone={isPopCapped ? 'warn' : 'neutral'}
+            testId="hud-troops"
             title="Tap: select all troops · long-press: troop capacity details"
             onClick={() => (onSelectAllTroops ? onSelectAllTroops() : setActiveModal(activeModal === 'pop' ? null : 'pop'))}
             onLongPress={() => setActiveModal(activeModal === 'pop' ? null : 'pop')}
             icon={<Users className="w-3.5 h-3.5 shrink-0" />}
             value={`${econ.population}/${econ.populationCap}`}
-            sub="troops"
+            sub="Troops"
           />
+          <Sep />
           <HudChip
-            tone={threatLevel === 'CRITICAL' || threatLevel === 'HIGH' ? 'danger' : threatLevel === 'ELEVATED' ? 'warn' : 'ok'}
+            tone={threatLevel === 'CRITICAL' || threatLevel === 'HIGH' ? 'danger' : threatLevel === 'ELEVATED' ? 'warn' : 'neutral'}
+            testId="hud-threat"
             title="Enemy threat level and alerts"
             onClick={() => setActiveModal(activeModal === 'alert' ? null : 'alert')}
             icon={<AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
-            value={threatLevel === 'NOMINAL' ? 'LOW' : threatLevel === 'ELEVATED' ? 'MED' : threatLevel === 'CRITICAL' ? 'CRIT' : 'HIGH'}
+            value={threatLevel === 'NOMINAL' ? 'Low' : threatLevel === 'ELEVATED' ? 'Raised' : threatLevel === 'CRITICAL' ? 'Attack' : 'High'}
             sub={`${enemyUnits.length} hostile`}
           />
+          <Sep />
           <button
             onClick={() => (onOpenMenu ? onOpenMenu() : setActiveModal(activeModal === 'menu' ? null : 'menu'))}
-            className="w-9 shrink-0 rounded-lg bg-[#16222F] hover:bg-[#1E2E40] border border-[#253446] flex items-center justify-center active:scale-95 transition-all"
-            title="Menu and settings"
+            className="w-10 shrink-0 rounded-md flex items-center justify-center text-nx-text2 hover:text-nx-text hover:bg-white/5 active:bg-white/10 transition-colors duration-100"
+            title="Menu"
             aria-label="Menu"
             data-testid="hud-menu"
           >
-            <Menu className="w-4 h-4 text-[#E6EDF3]" />
+            <Menu className="w-[18px] h-[18px]" />
           </button>
         </div>
 
         {/* Second line: compact mission tracker (left) and camera tools (right). Transparent, so the battlefield shows. */}
-        <div className="mx-auto w-full max-w-3xl flex items-start justify-between gap-2 pt-1">
+        <div className="mx-auto w-full max-w-2xl flex items-start justify-between gap-2 pt-1.5">
           <MissionTracker engine={engine} />
-          <div className="pointer-events-auto flex items-center gap-0.5 rounded-lg bg-[#0F1924]/80 border border-[#253446] p-0.5" data-testid="camera-tools">
+          <div className="nx-panel pointer-events-auto flex items-center gap-0.5 !rounded-lg p-0.5" data-testid="camera-tools">
             <button onClick={onCenterHQ} className="w-7 h-7 rounded-md text-[#22C99A] flex items-center justify-center active:scale-95" title="Center on headquarters" aria-label="Center on headquarters">
               <Crosshair className="w-3.5 h-3.5" />
             </button>

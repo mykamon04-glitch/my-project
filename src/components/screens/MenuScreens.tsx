@@ -67,8 +67,8 @@ export const MainMenuScreen: React.FC<{
   <div className="nx-screen flex flex-col" data-testid="main-menu">
     {/* battlefield backdrop: a real generated map, dimmed */}
     <div className="pointer-events-none fixed inset-0 overflow-hidden">
-      <MapPreview mapId="mountain_stronghold" px={360} className="absolute left-1/2 top-1/2 h-[140vmax] w-[140vmax] -translate-x-1/2 -translate-y-1/2 scale-110 opacity-40 blur-[2px]" label="Battlefield backdrop" />
-      <div className="absolute inset-0 bg-gradient-to-b from-nx-bg/60 via-nx-bg/75 to-nx-bg" />
+      <MapPreview mapId="temperate_warzone" options={{ size: 'large' }} px={420} className="absolute left-1/2 top-1/2 h-[150vmax] w-[150vmax] -translate-x-1/2 -translate-y-1/2 rotate-[-8deg] opacity-75" label="Battlefield backdrop" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(11,17,24,0.30)_0%,rgba(11,17,24,0.62)_55%,rgba(11,17,24,0.92)_100%)]" />
     </div>
     <div className="relative mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-6 py-6">
       <div className="text-center">

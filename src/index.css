@@ -166,3 +166,6 @@
   background: var(--color-nx-bg); color: var(--color-nx-text);
   padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
 }
+
+/* V13 bottom navigation: active tab = accent icon/label + a short indicator above it */
+.nx-tab-active::before { content: ''; position: absolute; top: 2px; left: 50%; width: 22px; height: 2px; margin-left: -11px; border-radius: 2px; background: var(--color-nx-accent); }
